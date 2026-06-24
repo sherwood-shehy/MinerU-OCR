@@ -1,0 +1,4 @@
+interface:
+  display_name: "MinerU OCR"
+  short_description: "Parse and merge long documents with MinerU OCR"
+  default_prompt: "Use $mineru-ocr to OCR this local document and save a merged Markdown result."
