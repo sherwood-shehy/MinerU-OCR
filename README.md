@@ -255,6 +255,128 @@ The Agent Skill additionally defines a publication policy for user-selected shar
 - remove transient `.mineru` bundles only after validating the final Markdown and resources;
 - never delete or modify the original source document.
 
+## AI Enhancement
+
+> The AI enhancement layer is a **separate, optional** post-processing step. It does not affect the core OCR pipeline and can be enabled per-run via the `--enhance` flag.
+
+After MinerU extracts the raw Markdown, the optional AI enhancement layer enriches the output with structured metadata: per-image descriptions, section summaries, named entities, cross-references, and tags. The result is written to `full.enhanced.md` alongside the original `full.md` without modifying it.
+
+### Design Background and Considerations
+
+**Why AI enhancement?** MinerU produces human-readable Markdown that preserves the document's visual layout, tables, and images. This is excellent for reading, but AI agents consuming the output benefit from explicit metadata — knowing what a chart describes, which entities appear in each section, and how sections relate to each other — without having to re-read the entire document.
+
+**Single-model approach.** Rather than chaining a vision model for images and a separate LLM for text, the enhancement layer uses **one model** — Doubao-Seed-2.0-lite (via Volcengine Coding Plan) — for both tasks. This simplifies configuration, reduces the number of API dependencies, and ensures the model has full document context when extracting relationships.
+
+**Non-destructive by design.** The original `full.md` is never touched. AI metadata is written to a sibling file (`full.enhanced.md`), so existing workflows that read `full.md` continue unchanged. Users decide when to use the enhanced output.
+
+**Blockquote-separated metadata.** The AI metadata section is wrapped in Markdown blockquotes (`>`), making it visually distinct from the document body while remaining valid Markdown. This also allows downstream tools to extract the metadata block with a simple regex or parser.
+
+**Per-image error tolerance.** A single corrupted or unrecognisable image does not block enhancement of the remaining images or the text analysis. Each image is processed independently, and errors are recorded in the output JSON per image.
+
+**Credential isolation.** The Doubao API key lives in the project `.env` file (gitignored) or environment variables, never in the repository. This matches the existing `MINERU_API_TOKEN` pattern.
+
+### Architecture
+
+```text
+             MinerU output
+         full.md + assets/
+                │
+                ▼
+  ┌─────────────────────────────┐
+  │     Doubao-Seed-2.0-lite    │
+  │                             │
+  │  1. analyze_text(full.md)   │
+  │     → sections, entities,   │
+  │       references, tags      │
+  │                             │
+  │  2. analyze_image(each img) │
+  │     → type, summary,        │
+  │       elements, findings,   │
+  │       keywords              │
+  └─────────────────────────────┘
+                │
+                ▼
+        full.enhanced.md
+   (original + blockquoted
+    AI metadata section)
+```
+
+### Output Format
+
+`full.enhanced.md` contains the original document text followed by a `---` separator and a blockquoted AI metadata block:
+
+```text
+(original full.md content, unchanged)
+
+---
+
+> ## AI 增强元数据
+>
+> ### 章节摘要
+> | 章节 | 摘要 |
+> | ---- | ---- |
+> | 一、... | ... |
+>
+> ### 实体与术语
+> | 实体 | 类型 | 说明 |
+> | ---- | ---- | ---- |
+> | ... | ... | ... |
+>
+> ### 跨章节关系
+> - 章节 A 的 XX 支撑章节 B 的 XX 分析
+>
+> ### 标签
+> `#tag1` `#tag2`
+>
+> ### 图片语义
+> ````json
+> [
+>   {
+>     "file": "assets/xxx.jpg",
+>     "type": "line_chart",
+>     "summary": "...",
+>     "elements": [...],
+>     "key_findings": [...],
+>     "keywords": [...]
+>   }
+> ]
+> ````
+```
+
+### Usage
+
+```bash
+# One-shot: process and enhance in one step
+mineru-ocr process report.pdf --enhance
+
+# Re-run enhancement on an existing result
+mineru-ocr enhance report.pdf.mineru/
+```
+
+### Configuration
+
+Set these in `.env` or environment variables:
+
+| Variable | Required | Default |
+| ------ | -------- | ------- |
+| `DOUBAO_API_KEY` | Yes (when using `--enhance`) | — |
+| `DOUBAO_BASE_URL` | No | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+| `DOUBAO_MODEL` | No | `doubao-seed-2.0-lite` |
+
+When `DOUBAO_API_KEY` is not set, the `--enhance` flag and `enhance` subcommand produce a clear error message.
+
+### Current Scope
+
+The enhancement layer focuses on single-document metadata extraction. It does **not** currently include:
+
+- Cross-document knowledge graph construction
+- Vector embedding or RAG pipeline integration
+- Web UI or Dashboard
+- Interactive Q&A over the document
+- Agentic retrieval workflows
+
+These capabilities are intentionally left to Knowhere and other specialised tools in the ecosystem.
+
 ## Reliability and Security
 
 - API tokens are never included in job manifests or public tool responses.
