@@ -6,4 +6,9 @@ __pycache__/
 pytest-cache-files-*/
 .env
 *.mineru.tmp-*/
+*.mineru/
 outputs/
+
+# Local workspace artifacts (not for upstream)
+CLAUDE.md
+PROJECT_STATUS.md
