@@ -259,7 +259,7 @@ Agent Skill 还规定了向用户指定共享目录发布结果的后处理策�
 
 > AI 增强层是一个**独立、可选**的后处理环节。它不影响核心 OCR 管线，通过 `--enhance` 参数按需启用。
 
-MinerU 完成 Markdown 提取后，可选的 AI 增强层会为输出补充结构化元数据：图片描述、章节摘要、命名实体、跨章节关系和标签。结果写入 `full.enhanced.md`，与原始 `full.md` 并行存在，绝不修改原始输出。
+MinerU 完成 Markdown 提取后，可选的 AI 增强层会生成一个适合检索和知识库导入的 JSONL 文件。原始 Markdown 仍是证据层，不会被修改。
 
 ### 设计背景与考虑
 
@@ -267,13 +267,13 @@ MinerU 完成 Markdown 提取后，可选的 AI 增强层会为输出补充结�
 
 **单一模型策略。** 图片理解需要用多模态模型，文本分析也需要 LLM。增强层选择**一个模型**——Doubao-Seed-2.0-lite（火山引擎 Coding Plan）——同时承担两项任务。这样做简化了配置（用户只需一个 API Key），减少了 API 依赖数量，同时确保模型在提取跨章节关系时有完整的文档上下文。
 
-**非破坏性输出。** 原始 `full.md` 始终坚持不变。AI 元数据写入同级新文件 `full.enhanced.md`，所有已存在的 `full.md` 读取流程不受影响。由用户决定何时使用增强输出。
+**非破坏性输出。** 原始 Markdown 始终保持不变。AI 输出只写入同级 `<source>.ai.jsonl` 文件。如果原始 Markdown 已经生成，可直接运行 `mineru-ocr enhance <markdown-or-result-dir>`，不会重复 OCR。
 
-**Blockquote 分隔。** AI 元数据块使用 Markdown 块引用（`>`）包裹。这样既保证视觉上与正文区分，又保持 Markdown 合法性，下游工具也能通过简单的正则或解析器提取元数据块。
+**分片文本分析。** 长文档不再静默截断，而是按章节感知的方式分片分析。覆盖范围元数据会写入 JSONL 的第一条 metadata 记录。
 
 **逐图错误容忍。** 单张图片损坏或无法识别不会影响其余图片和全文分析。每张图片独立处理，错误仅记录在该图片的 JSON 条目中。
 
-**凭据隔离。** Doubao API Key 放在项目 `.env` 文件中（已被 `.gitignore` 排除），或者通过环境变量设置，绝不写入仓库。这与现有 `MINERU_API_TOKEN` 的风格一致。
+**凭据隔离。** Doubao API Key 只通过 `mineru-ocr config set-doubao-key` 保存到本机用户配置。它不会写入仓库文件、生成的 Markdown、manifest、示例或回复。
 
 ### 架构
 
@@ -295,52 +295,16 @@ MinerU 完成 Markdown 提取后，可选的 AI 增强层会为输出补充结�
   └─────────────────────────────┘
                 │
                 ▼
-        full.enhanced.md
-   (原文 + 块引用包裹的
-    AI 元数据)
+       <source>.ai.jsonl
 ```
 
 ### 输出格式
 
-`full.enhanced.md` 包含完整的原始正文，后面以 `---` 分隔，接着是块引用包裹的 AI 元数据：
+增强层会在源 Markdown 旁边写出一个 AI 消费文件：
 
-```text
-（原始 full.md 内容，不变）
-
----
-
-> ## AI 增强元数据
->
-> ### 章节摘要
-> | 章节 | 摘要 |
-> | ---- | ---- |
-> | 一、... | ... |
->
-> ### 实体与术语
-> | 实体 | 类型 | 说明 |
-> | ---- | ---- | ---- |
-> | ... | ... | ... |
->
-> ### 跨章节关系
-> - 章节 A 的 XX 支撑章节 B 的 XX 分析
->
-> ### 标签
-> `#tag1` `#tag2`
->
-> ### 图片语义
-> ````json
-> [
->   {
->     "file": "assets/xxx.jpg",
->     "type": "line_chart",
->     "summary": "...",
->     "elements": [...],
->     "key_findings": [...],
->     "keywords": [...]
->   }
-> ]
-> ````
-```
+| 文件 | 用途 |
+| ---- | ---- |
+| `<source>.ai.jsonl` | 每行一个 metadata、文本或图片 chunk，包含归一化表格、图片解释、图片上下文、章节路径、页码和覆盖范围元数据，便于检索和智能体工作流消费。 |
 
 ### 使用方法
 
@@ -350,19 +314,21 @@ mineru-ocr process report.pdf --enhance
 
 # 对已有结果重新运行增强
 mineru-ocr enhance report.pdf.mineru/
+
+# 也可以增强已发布的 Markdown 文件
+mineru-ocr enhance report.md
 ```
 
 ### 配置参数
 
-在 `.env` 或环境变量中设置：
+使用 `--enhance` 前，先在本机配置 Doubao：
 
-| 变量 | 必填 | 默认值 |
-| ---- | ---- | ------ |
-| `DOUBAO_API_KEY` | 是（使用 `--enhance` 时） | — |
-| `DOUBAO_BASE_URL` | 否 | `https://ark.cn-beijing.volces.com/api/coding/v3` |
-| `DOUBAO_MODEL` | 否 | `doubao-seed-2.0-lite` |
+```bash
+mineru-ocr config set-doubao-key
+# 输入：你的豆包apikey
+```
 
-未设置 `DOUBAO_API_KEY` 时，使用 `--enhance` 或 `enhance` 子命令会提示明确的错误信息。
+默认参数是 `https://ark.cn-beijing.volces.com/api/coding/v3` 和 `doubao-seed-2.0-lite`。`mineru-ocr config show` 只显示是否已配置 key，不会打印真实 key。未配置 key 时，使用 `--enhance` 或 `enhance` 子命令会提示明确的错误信息。
 
 ### 当前边界
 

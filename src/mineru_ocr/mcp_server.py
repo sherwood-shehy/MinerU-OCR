@@ -46,6 +46,14 @@ async def ocr_clean(job_id: str) -> dict:
     return await asyncio.to_thread(clean_job, job_id)
 
 
+@mcp.tool()
+async def ocr_enhance(path: str) -> dict:
+    """Generate an AI-oriented JSONL file for an existing MinerU Markdown output."""
+    from .enhancer import enhance_output
+
+    return await asyncio.to_thread(enhance_output, path)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="mineru-ocr-mcp")
     parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
@@ -58,4 +66,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-

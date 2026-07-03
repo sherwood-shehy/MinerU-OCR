@@ -8,7 +8,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .errors import MinerUOCRError
-from .config import clear_token, config_status, prompt_and_save_token
+from .config import (
+    clear_doubao_key,
+    clear_token,
+    config_status,
+    prompt_and_save_doubao_key,
+    prompt_and_save_token,
+)
 from .models import OCROptions
 from .service import clean_job, process_files, resume_job, status_job, submit_job
 
@@ -41,7 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--timeout", type=int, default=1800)
             item.add_argument(
                 "--enhance", action="store_true",
-                help="After OCR, generate full.enhanced.md with AI metadata via Doubao (requires DOUBAO_API_KEY)",
+                help="After OCR, generate an AI-oriented JSONL file via Doubao",
+            )
+            item.add_argument(
+                "--enhance-best-effort", action="store_true",
+                help="Do not fail the process command if AI enhancement fails",
             )
     status = sub.add_parser("status")
     status.add_argument("job_id")
@@ -53,15 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("job_id")
     enhance = sub.add_parser(
         "enhance",
-        help="Run the AI enhancement layer on an existing MinerU result directory",
+        help="Generate an AI-oriented JSONL file for an existing MinerU result",
     )
-    enhance.add_argument("result_dir", help="Path to a *.mineru directory produced by `process`")
+    enhance.add_argument("result_dir", help="Path to a *.mineru directory or a published Markdown file")
     config = sub.add_parser("config")
-    config.add_argument("action", choices=["set-token", "show", "clear-token"])
+    config.add_argument(
+        "action",
+        choices=["set-token", "show", "clear-token", "set-doubao-key", "clear-doubao-key"],
+    )
     return parser
 
 
-def _enhance_results(results: list[dict]) -> None:
+def _enhance_results(results: list[dict], *, best_effort: bool = False) -> None:
     """Run the AI enhancement layer for each completed process result in-place."""
     from .enhancer import enhance_output  # local import to avoid pulling httpx/etc when unused
     for result in results:
@@ -71,12 +84,13 @@ def _enhance_results(results: list[dict]) -> None:
             result["enhance_error"] = "Skipped: no result_dir on this job"
             continue
         try:
-            enhanced_path = enhance_output(result_dir)
+            result["ai_enhancement"] = enhance_output(result_dir)
             result["enhanced"] = True
-            result["enhanced_path"] = str(enhanced_path)
         except Exception as exc:
             result["enhanced"] = False
             result["enhance_error"] = str(exc)
+            if not best_effort:
+                raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "process":
             result = process_files(args.files, _options(args), args.timeout)
             if getattr(args, "enhance", False):
-                _enhance_results(result)
+                _enhance_results(result, best_effort=getattr(args, "enhance_best_effort", False))
         elif args.command == "submit":
             result = submit_job(args.files, _options(args))
         elif args.command == "status":
@@ -99,12 +113,15 @@ def main(argv: list[str] | None = None) -> int:
             result = clean_job(args.job_id)
         elif args.command == "enhance":
             from .enhancer import enhance_output
-            enhanced_path = enhance_output(args.result_dir)
-            result = {"enhanced": True, "enhanced_path": str(enhanced_path)}
+            result = enhance_output(args.result_dir)
         elif args.action == "set-token":
             result = {"saved": True, "config_path": str(prompt_and_save_token())}
+        elif args.action == "set-doubao-key":
+            result = {"saved": True, "config_path": str(prompt_and_save_doubao_key())}
         elif args.action == "clear-token":
             result = {"cleared": clear_token(), **config_status()}
+        elif args.action == "clear-doubao-key":
+            result = {"cleared": clear_doubao_key(), **config_status()}
         else:
             result = config_status()
         print(json.dumps(result, ensure_ascii=False, indent=2))

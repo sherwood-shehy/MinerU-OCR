@@ -259,7 +259,7 @@ The Agent Skill additionally defines a publication policy for user-selected shar
 
 > The AI enhancement layer is a **separate, optional** post-processing step. It does not affect the core OCR pipeline and can be enabled per-run via the `--enhance` flag.
 
-After MinerU extracts the raw Markdown, the optional AI enhancement layer enriches the output with structured metadata: per-image descriptions, section summaries, named entities, cross-references, and tags. The result is written to `full.enhanced.md` alongside the original `full.md` without modifying it.
+After MinerU extracts the raw Markdown, the optional AI enhancement layer creates one retrieval-ready JSONL file. The original Markdown remains the evidence layer and is not modified.
 
 ### Design Background and Considerations
 
@@ -267,13 +267,13 @@ After MinerU extracts the raw Markdown, the optional AI enhancement layer enrich
 
 **Single-model approach.** Rather than chaining a vision model for images and a separate LLM for text, the enhancement layer uses **one model** — Doubao-Seed-2.0-lite (via Volcengine Coding Plan) — for both tasks. This simplifies configuration, reduces the number of API dependencies, and ensures the model has full document context when extracting relationships.
 
-**Non-destructive by design.** The original `full.md` is never touched. AI metadata is written to a sibling file (`full.enhanced.md`), so existing workflows that read `full.md` continue unchanged. Users decide when to use the enhanced output.
+**Non-destructive by design.** The original Markdown is never touched. The AI output is written as a sibling `<source>.ai.jsonl` file. If OCR has already produced the Markdown, run `mineru-ocr enhance <markdown-or-result-dir>` directly; OCR is not repeated.
 
-**Blockquote-separated metadata.** The AI metadata section is wrapped in Markdown blockquotes (`>`), making it visually distinct from the document body while remaining valid Markdown. This also allows downstream tools to extract the metadata block with a simple regex or parser.
+**Chunked text analysis.** Long documents are analyzed in section-aware chunks instead of being silently truncated. Coverage metadata is stored in the first JSONL metadata record.
 
 **Per-image error tolerance.** A single corrupted or unrecognisable image does not block enhancement of the remaining images or the text analysis. Each image is processed independently, and errors are recorded in the output JSON per image.
 
-**Credential isolation.** The Doubao API key lives in the project `.env` file (gitignored) or environment variables, never in the repository. This matches the existing `MINERU_API_TOKEN` pattern.
+**Credential isolation.** The Doubao API key is stored only in the local user configuration via `mineru-ocr config set-doubao-key`. It is not stored in repository files, generated Markdown, manifests, examples, or responses.
 
 ### Architecture
 
@@ -296,52 +296,16 @@ After MinerU extracts the raw Markdown, the optional AI enhancement layer enrich
   └─────────────────────────────┘
                 │
                 ▼
-        full.enhanced.md
-   (original + blockquoted
-    AI metadata section)
+       <source>.ai.jsonl
 ```
 
 ### Output Format
 
-`full.enhanced.md` contains the original document text followed by a `---` separator and a blockquoted AI metadata block:
+The enhancement layer writes one AI consumption file beside the source Markdown:
 
-```text
-(original full.md content, unchanged)
-
----
-
-> ## AI 增强元数据
->
-> ### 章节摘要
-> | 章节 | 摘要 |
-> | ---- | ---- |
-> | 一、... | ... |
->
-> ### 实体与术语
-> | 实体 | 类型 | 说明 |
-> | ---- | ---- | ---- |
-> | ... | ... | ... |
->
-> ### 跨章节关系
-> - 章节 A 的 XX 支撑章节 B 的 XX 分析
->
-> ### 标签
-> `#tag1` `#tag2`
->
-> ### 图片语义
-> ````json
-> [
->   {
->     "file": "assets/xxx.jpg",
->     "type": "line_chart",
->     "summary": "...",
->     "elements": [...],
->     "key_findings": [...],
->     "keywords": [...]
->   }
-> ]
-> ````
-```
+| File | Purpose |
+| ---- | ------- |
+| `<source>.ai.jsonl` | One JSON object per metadata, text, or image chunk for retrieval and agent workflows. It includes normalized tables, image interpretations, image context, section paths, page ranges, and coverage metadata. |
 
 ### Usage
 
@@ -351,19 +315,21 @@ mineru-ocr process report.pdf --enhance
 
 # Re-run enhancement on an existing result
 mineru-ocr enhance report.pdf.mineru/
+
+# Or enhance a published Markdown file
+mineru-ocr enhance report.md
 ```
 
 ### Configuration
 
-Set these in `.env` or environment variables:
+Configure Doubao locally before using `--enhance`:
 
-| Variable | Required | Default |
-| ------ | -------- | ------- |
-| `DOUBAO_API_KEY` | Yes (when using `--enhance`) | — |
-| `DOUBAO_BASE_URL` | No | `https://ark.cn-beijing.volces.com/api/coding/v3` |
-| `DOUBAO_MODEL` | No | `doubao-seed-2.0-lite` |
+```bash
+mineru-ocr config set-doubao-key
+# Enter: 你的豆包apikey
+```
 
-When `DOUBAO_API_KEY` is not set, the `--enhance` flag and `enhance` subcommand produce a clear error message.
+Defaults are `https://ark.cn-beijing.volces.com/api/coding/v3` and `doubao-seed-2.0-lite`. `mineru-ocr config show` reports whether the key is configured without printing it. When the key is missing, the `--enhance` flag and `enhance` subcommand produce a clear error message.
 
 ### Current Scope
 

@@ -21,3 +21,20 @@ def test_clear_token(tmp_path, monkeypatch):
     config.save_token("plain-token")
     assert config.clear_token()
     assert not path.exists()
+
+
+def test_doubao_config_is_local_and_preserves_mineru_token(tmp_path, monkeypatch):
+    path = tmp_path / "config.toml"
+    monkeypatch.setattr(config, "config_path", lambda: path)
+    config.save_token("mineru-token")
+    config.save_doubao_key("doubao-key")
+
+    assert config.get_token() == "mineru-token"
+    assert config.get_doubao_config()["api_key"] == "doubao-key"
+    assert config.config_status()["doubao_key_set"] is True
+    assert "doubao-key" in path.read_text(encoding="utf-8")
+
+    assert config.clear_doubao_key()
+    assert config.get_token() == "mineru-token"
+    assert config.get_doubao_config()["api_key"] is None
+    assert "doubao-key" not in path.read_text(encoding="utf-8")
