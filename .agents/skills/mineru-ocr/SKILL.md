@@ -14,7 +14,9 @@ Use the bundled `mineru-ocr` package or MCP server to turn local documents into 
 3. Install this repository once with `python -m pip install -e .`.
 4. Prefer the MCP tools when connected; otherwise run the CLI.
 
-Configure a per-machine plaintext Token with `mineru-ocr config set-token`. This prompts without echoing and writes the Token to the platform user configuration directory. Never place the Token in a command argument, repository file, manifest, or response.
+Configure a per-machine plaintext MinerU Token with `mineru-ocr config set-token`. This prompts without echoing and writes the Token to the platform user configuration directory. Never place the Token in a command argument, repository file, manifest, or response.
+
+For optional AI enhancement, configure the Doubao key with `mineru-ocr config set-doubao-key` and enter `你的豆包apikey`. The default provider settings are `https://ark.cn-beijing.volces.com/api/coding/v3` and `doubao-seed-2.0-lite`. The Doubao key is local to this skill and must not be written to repository files, Markdown output, manifests, examples, or responses.
 
 ## Process documents
 
@@ -23,8 +25,9 @@ Configure a per-machine plaintext Token with `mineru-ocr config set-token`. This
 - Run `mineru-ocr status <job_id>` to refresh and automatically publish completed output.
 - Run `mineru-ocr resume <job_id>` after a transient or partial failure.
 - Run `mineru-ocr clean <job_id>` only when the user wants to discard unfinished job data.
+- Run `mineru-ocr enhance <path>` to generate an AI-oriented `<source>.ai.jsonl` file for an existing result directory or Markdown file.
 
-Use the matching `ocr_process`, `ocr_submit`, `ocr_status`, `ocr_resume`, and `ocr_clean` MCP tools when available.
+Use the matching `ocr_process`, `ocr_submit`, `ocr_status`, `ocr_resume`, `ocr_clean`, and `ocr_enhance` MCP tools when available.
 
 ## Apply format rules
 
@@ -46,6 +49,8 @@ Defaults are `model_version=vlm`, `is_ocr=true`, `language=ch`, tables enabled, 
 - Verify the final Markdown and every rewritten resource reference, then delete the transient `full.md`, per-source `.mineru` directory, and any temporary source copy. Never delete or modify the original source document.
 - Retain and report `full.md` only when no legal source-derived Markdown filename can be created.
 - Report the final Markdown path.
+
+When AI enhancement is requested, report the generated `<source>.ai.jsonl` path. Treat the original Markdown as the evidence layer and the JSONL file as the derived AI consumption artifact. Do not report or preserve separate `ai.md`, `images.json`, or AI manifest files as final outputs.
 
 If a call times out, return the job ID and current state rather than resubmitting. If processing fails, include the MinerU error code and affected page range without exposing signed URLs.
 

@@ -8,6 +8,7 @@ pytest-cache-files-*/
 *.mineru.tmp-*/
 *.mineru/
 outputs/
+test-inputs/
 
 # Local workspace artifacts (not for upstream)
 CLAUDE.md

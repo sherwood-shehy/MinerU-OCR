@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import random
 import re
 import time
@@ -17,11 +16,12 @@ from pathlib import Path
 
 import httpx
 
+from .config import DEFAULT_DOUBAO_BASE_URL, DEFAULT_DOUBAO_MODEL, get_doubao_config
 from .errors import MinerUOCRError
 
 
-DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
-DEFAULT_MODEL = "doubao-seed-2.0-lite"
+DEFAULT_BASE_URL = DEFAULT_DOUBAO_BASE_URL
+DEFAULT_MODEL = DEFAULT_DOUBAO_MODEL
 
 # Conservative cap to keep prompt payloads under model context window. Long
 # Markdown is truncated at this many characters before being sent. Doubao-Seed
@@ -58,13 +58,17 @@ def _parse_json(text: str) -> dict:
         raise DoubaoError("Doubao response did not contain JSON")
 
 
-_IMAGE_PROMPT = """你是文档图片分析专家。分析这张从文档中提取的图片，并仅输出 JSON：
+_IMAGE_PROMPT = """你是文档图片分析专家。请结合图片和文档上下文分析这张图片，并仅输出 JSON：
 
 {
   "type": "图片类型",
-  "summary": "一句话概括图片核心内容",
+  "summary": "一句话概括图片在本文档中的核心含义",
+  "visual_description": "只基于视觉内容描述图中可见对象、标注和结构",
+  "contextual_interpretation": "结合图题、章节和附近条文解释图片表达的业务/技术含义",
   "elements": ["图片中的关键视觉元素，3-8 个"],
-  "key_findings": ["从图片中能得出的关键结论，1-5 条；若是纯装饰图请返回空数组"],
+  "key_findings": ["从图片和上下文能得出的关键结论，1-5 条；若是纯装饰图请返回空数组"],
+  "context_consistency": "high|medium|low",
+  "uncertainty": "不确定点；若无明显不确定则为空字符串",
   "keywords": ["可用于检索的关键词，5-10 个"]
 }
 
@@ -72,7 +76,13 @@ type 取值：line_chart（折线图）| bar_chart（柱状图）| pie_chart（�
 
 要求：
 1. 仅输出 JSON，不要任何额外文字、不要解释、不要 Markdown 围栏
-2. 如果该图片仅是 logo 或装饰，summary 用"装饰性图片"，key_findings 留空数组
+2. 必须优先使用图题、章节标题和附近条文来判断图片所属领域、对象和含义
+3. 不要仅凭视觉相似性推断为与上下文冲突的行业或场景；如果视觉内容不清楚，应在 contextual_interpretation 中基于上下文保守解释
+4. 如果视觉判断和上下文明显冲突，context_consistency 返回 low，并在 uncertainty 中说明
+5. 如果该图片仅是 logo、防伪标识或装饰，summary 用"装饰性图片"，key_findings 留空数组
+
+文档上下文：
+{context}
 """
 
 
@@ -115,13 +125,14 @@ class DoubaoClient:
         model: str | None = None,
         timeout: float = 120.0,
     ):
-        api_key = (api_key or os.environ.get("DOUBAO_API_KEY", "")).strip()
+        configured = get_doubao_config()
+        api_key = (api_key or configured["api_key"] or "").strip()
         if not api_key:
             raise DoubaoError(
-                "DOUBAO_API_KEY is required. Set it in the environment or project .env file."
+                "Doubao API key is required. Configure it with 'mineru-ocr config set-doubao-key'."
             )
-        self.base_url = (base_url or os.environ.get("DOUBAO_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self.model = model or os.environ.get("DOUBAO_MODEL") or DEFAULT_MODEL
+        self.base_url = (base_url or configured["base_url"] or DEFAULT_BASE_URL).rstrip("/")
+        self.model = model or configured["model"] or DEFAULT_MODEL
         self.client = httpx.Client(
             timeout=httpx.Timeout(timeout, connect=20.0),
             follow_redirects=True,
@@ -139,15 +150,19 @@ class DoubaoClient:
 
     # ---------- public helpers ----------
 
-    def analyze_image(self, image_path: str | Path) -> dict:
+    def analyze_image(self, image_path: str | Path, *, context: dict | None = None) -> dict:
         """Send a local image to Doubao and return its structured semantics."""
         path = Path(image_path)
         if not path.is_file():
             raise DoubaoError(f"Image not found: {path}")
         mime = _guess_mime(path)
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        prompt = _IMAGE_PROMPT.replace(
+            "{context}",
+            json.dumps(context or {}, ensure_ascii=False, indent=2),
+        )
         content = [
-            {"type": "text", "text": _IMAGE_PROMPT},
+            {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
         ]
         raw = self._chat([{"role": "user", "content": content}])

@@ -12,7 +12,7 @@
 | **表格** | Markdown 表格格式保留，但 AI 需要自己推断"这个表格在说什么" |
 | **语义** | 没有章节摘要、实体提取、跨文档关系 |
 
-**目标**：在现有输出基础上，新增一个可选的 AI 增强层，输出一份 AI 友好的增强文档。
+**目标**：在现有输出基础上，新增一个可选的 AI 增强层，输出面向 AI 消费的派生产物。
 
 ---
 
@@ -31,11 +31,10 @@ mineru-ocr process file.pdf --enhance
                            （火山引擎 Coding Plan）
                                 │
                         1. 图片逐个分析 → 结构化语义
-                        2. 全文分析 → 章节摘要/实体/关系/标签
+                        2. 分片全文分析 → 章节摘要/实体/关系/标签
                                 │
                                 ▼
-                        full.enhanced.md
-                    （原文 + AI 元数据块）
+                        <source>.ai.jsonl
 ```
 
 ---
@@ -52,65 +51,33 @@ mineru-ocr process file.pdf --enhance
 
 ---
 
-## 四、输出格式：full.enhanced.md
+## 四、输出格式
 
-一份 Markdown 文件，包含两部分：
+增强层输出一个 AI 消费文件，原始 Markdown 作为证据层保留不变：
 
-### 第一部分：原始全文
+| 文件 | 说明 |
+|------|------|
+| `<source>.ai.jsonl` | 每行一个 metadata、文本或图片块，包含归一化表格、图片语义、图片上下文、章节路径、页码和处理覆盖率，便于 RAG 和智能体检索 |
 
-MinerU 原始输出的全部内容，**原样保留，不做任何修改**。
-
-### 第二部分：AI 增强元数据块
-
-```
----
-
-> ## AI 增强元数据
->
-> ### 章节摘要
-> | 章节 | 摘要 |
-> |------|------|
-> | 一、XX | ... |
-> | 二、XX | ... |
->
-> ### 实体与术语
-> | 实体 | 类型 | 说明 |
-> |------|------|------|
-> | ... | ... | ... |
->
-> ### 跨章节关系
-> - 章节 A 的 XX 内容支撑章节 B 的 XX 分析
->
-> ### 标签
-> `#tag1` `#tag2` `#tag3`
->
-> ### 图片语义
-> ````json
-> [
->   {
->     "file": "assets/xxx.jpg",
->     "type": "line_chart|bar_chart|table|diagram|photo|screenshot",
->     "summary": "图片内容一句话摘要",
->     "elements": ["关键视觉元素1", "关键视觉元素2"],
->     "key_findings": ["关键发现1", "关键发现2"],
->     "keywords": ["关键词1", "关键词2"]
->   }
-> ]
-> ````
-```
-
-AI 元数据块使用 `>` blockquote 包裹，既与原文视觉区分，也便于程序解析。
+如果原始 Markdown 已经生成，可直接运行 `mineru-ocr enhance <path>`，不会重复 OCR。
 
 ---
 
-## 五、环境变量配置
+## 五、本机私有配置
 
-| 变量 | 说明 | 默认值 | 必填 |
-|------|------|--------|------|
-| `MINERU_API_TOKEN` | MinerU Cloud API Token | - | ✅（已有） |
-| `DOUBAO_API_KEY` | 火山引擎 Coding Plan API Key | - | ✅（使用 --enhance 时） |
-| `DOUBAO_BASE_URL` | 火山引擎 API Endpoint | `https://ark.cn-beijing.volces.com/api/coding/v3` | ❌ |
-| `DOUBAO_MODEL` | 豆包模型名 | `doubao-seed-2.0-lite` | ❌ |
+Doubao API Key 只保存在本机用户配置目录，不进入仓库、示例、Markdown 输出或 manifest。
+
+```bash
+mineru-ocr config set-doubao-key
+# 输入：你的豆包apikey
+```
+
+默认提供商参数：
+
+| 配置项 | 默认值 |
+|------|--------|
+| `doubao_base_url` | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+| `doubao_model` | `doubao-seed-2.0-lite` |
 
 ---
 
@@ -123,8 +90,9 @@ mineru-ocr process file.pdf
 # 增强输出
 mineru-ocr process file.pdf --enhance
 
-# 也可在提交后单独对已有 job 做增强（后续考虑）
-mineru-ocr enhance <job_id>
+# 也可对已有结果目录或 Markdown 文件增强
+mineru-ocr enhance test.pdf.mineru/
+mineru-ocr enhance test.md
 ```
 
 ---
@@ -143,14 +111,15 @@ Doubao API 客户端，OpenAI 兼容格式调用火山引擎：
 
 增强层核心逻辑：
 
-- `enhance_output(output_dir: Path) → Path`：入口函数
+- `enhance_output(path: Path) → dict`：入口函数
   - 遍历 `assets/`，逐个图片调用 Doubao 分析 → 汇总
-  - 读取 `full.md`，调用 Doubao 全文分析
-  - 组装 `full.enhanced.md`
+  - 读取 Markdown，按章节感知分片调用 Doubao 全文分析
+  - 输出 `<source>.ai.jsonl`
 
 ### 3. 修改 `src/mineru_ocr/cli.py`
 
 - `process` 子命令新增 `--enhance` 参数
+- `process` 子命令新增 `--enhance-best-effort` 参数
 - 处理后调用 `enhance_output()`
 
 ---
@@ -221,9 +190,10 @@ Doubao API 客户端，OpenAI 兼容格式调用火山引擎：
 ## 十、向后兼容性
 
 - 不加 `--enhance` 时，行为、输出、性能完全不变
-- `full.md` 始终保留原始 MinerU 输出
-- `full.enhanced.md` 是新增文件，不影响已有流程
-- 没配 `DOUBAO_API_KEY` 时 `--enhance` 给出明确错误提示
+- 原始 Markdown 始终保留为证据层
+- AI JSONL 写入同级文件，不影响已有 Markdown 读取流程
+- 已有 Markdown 可直接增强，无需重复 OCR
+- 没配置 Doubao key 时 `--enhance` 给出明确错误提示
 
 ---
 
@@ -238,11 +208,10 @@ ls test.pdf.mineru/
 # 验证增强输出
 mineru-ocr process test.pdf --enhance
 ls test.pdf.mineru/
-# 应额外包含: full.enhanced.md
+# 应额外包含: full.ai.jsonl
 
-# 验证 AI 元数据块格式
-head -5 test.pdf.mineru/full.enhanced.md   # 应为原始内容开头
-tail -80 test.pdf.mineru/full.enhanced.md  # 应为 AI 元数据块
+# 验证 AI JSONL
+head -1 test.pdf.mineru/full.ai.jsonl
 ```
 
 ---
