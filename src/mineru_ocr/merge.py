@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
-import re
 import shutil
 import uuid
 import zipfile
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, urlsplit
 
 from .errors import MergeError
 from .models import OCRJob, utc_now
-
-
-MARKDOWN_LINK = re.compile(r"(?P<prefix>!?\[[^\]]*\]\()(?P<target>[^)\s]+)(?P<suffix>(?:\s+[^)]*)?\))")
-HTML_LINK = re.compile(r"(?P<prefix>\b(?:src|href)\s*=\s*['\"])(?P<target>[^'\"]+)(?P<suffix>['\"])", re.I)
+from .provenance import build_manifest, digest_file, layout_locations
+from .references import local_resource, namespace_reference_labels, references, rewrite_references
 
 
 def safe_extract(zip_path: Path, destination: Path) -> None:
@@ -43,29 +39,52 @@ def find_full_md(root: Path) -> Path:
 
 def _rewrite_assets(markdown: str, md_path: Path, extract_root: Path, assets_root: Path, part_index: int) -> str:
     part_root = assets_root / f"part-{part_index:04d}"
-
-    def rewrite(match: re.Match) -> str:
-        raw = match.group("target")
+    replacements = {}
+    for reference in references(markdown):
+        raw = reference.target
         parsed = urlsplit(raw.strip("<>"))
-        if parsed.scheme or parsed.netloc or parsed.path.startswith("/") or raw.startswith(("#", "data:")):
-            return match.group(0)
-        source = (md_path.parent / unquote(parsed.path)).resolve()
-        root = extract_root.resolve()
-        if not source.is_file() or (source != root and root not in source.parents):
-            return match.group(0)
-        relative = source.relative_to(root)
+        source = local_resource(md_path.parent, raw)
+        if source is None:
+            continue
+        relative = source.relative_to(extract_root.resolve())
         destination = part_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
-        replacement = (Path("assets") / f"part-{part_index:04d}" / relative).as_posix()
+        replacement = quote((Path("assets") / f"part-{part_index:04d}" / relative).as_posix(), safe='/')
         if parsed.query:
             replacement += f"?{parsed.query}"
         if parsed.fragment:
             replacement += f"#{parsed.fragment}"
-        return f"{match.group('prefix')}{replacement}{match.group('suffix')}"
+        replacements[raw] = replacement
+    return rewrite_references(markdown, replacements)
 
-    markdown = MARKDOWN_LINK.sub(rewrite, markdown)
-    return HTML_LINK.sub(rewrite, markdown)
+
+def _preserve_evidence(part, root: Path, staging: Path) -> tuple[list[dict], dict]:
+    files, locations = [], {}
+    patterns = ('content_list.json', 'content_list_v2.json', 'middle.json', 'model.json', 'layout.json')
+    for source in sorted(root.rglob('*.json')):
+        if not any(source.name == name or source.name.endswith('_' + name) for name in patterns):
+            continue
+        relative = Path('evidence') / f'part-{part.index:04d}' / source.relative_to(root)
+        target = staging / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        files.append({'path': relative.as_posix(), 'sha256': digest_file(target), 'part_index': part.index})
+        if source.name.endswith('content_list.json'):
+            try:
+                payload = json.loads(source.read_text(encoding='utf-8'))
+            except (ValueError, UnicodeError):
+                files[-1]['adapter_status'] = 'unreadable_json'
+                continue
+            adapted = layout_locations(payload, part, relative.as_posix())
+            files[-1]['adapter_status'] = 'adapted' if adapted else 'retained_unmapped'
+            for asset, entries in adapted.items():
+                file = local_resource(source.parent, asset)
+                if file is None:
+                    continue
+                destination = (Path('assets') / f'part-{part.index:04d}' / file.relative_to(root)).as_posix()
+                locations.setdefault(destination, []).extend(entries)
+    return files, locations
 
 
 def merge_job(job: OCRJob) -> Path:
@@ -76,11 +95,16 @@ def merge_job(job: OCRJob) -> Path:
     staging.mkdir(parents=True)
     assets = staging / "assets"
     sections: list[str] = []
+    evidence_files, asset_locations = [], {}
     try:
         for part in parts:
             md_path = Path(part.full_md)
             extract_root = Path(part.extracted_dir or md_path.parent)
+            evidence, locations = _preserve_evidence(part, extract_root, staging)
+            evidence_files.extend(evidence)
+            asset_locations.update(locations)
             content = md_path.read_text(encoding="utf-8").strip()
+            content = namespace_reference_labels(content, f'mineru-part-{part.index:04d}-')
             content = _rewrite_assets(content, md_path, extract_root, assets, part.index)
             if part.page_start and part.page_end:
                 sections.append(f"<!-- MinerU source pages {part.page_start}-{part.page_end} -->\n\n{content}")
@@ -96,21 +120,20 @@ def merge_job(job: OCRJob) -> Path:
                 "page_start": p.page_start, "page_end": p.page_end,
                 "page_ranges": p.page_ranges, "physical": p.physical, "trace_id": p.trace_id,
             } for p in parts],
+            'evidence_files': evidence_files, 'asset_locations': asset_locations,
         }
+        manifest = build_manifest(staging / 'full.md', manifest)
         (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         destination = Path(job.output_dir)
-        backup = destination.with_name(f"{destination.name}.bak-{uuid.uuid4().hex[:8]}")
-        if destination.exists():
-            destination.replace(backup)
-        try:
-            staging.replace(destination)
-        except Exception:
-            if backup.exists() and not destination.exists():
-                backup.replace(destination)
-            raise
-        shutil.rmtree(backup, ignore_errors=True)
+        original = destination
+        suffix = 1
+        while destination.exists():
+            destination = original.with_name(f'{original.name} ({suffix})')
+            suffix += 1
+        staging.rename(destination)
+        job.output_dir = str(destination)
         return destination
     except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
+        if staging.resolve().parent == Path(job.output_dir).resolve().parent:
+            shutil.rmtree(staging, ignore_errors=True)
         raise
-

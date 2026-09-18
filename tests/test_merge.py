@@ -48,3 +48,22 @@ def test_safe_extract_rejects_zip_slip(tmp_path):
     with pytest.raises(MergeError):
         safe_extract(archive, tmp_path / "out")
 
+
+def test_repeated_merge_retains_existing_result(tmp_path):
+    job = make_job(tmp_path)
+    first = merge_job(job)
+    (first / "review-notes.txt").write_text("keep", encoding="utf-8")
+    job.output_dir = str(first)
+    second = merge_job(job)
+    assert second != first
+    assert (first / "review-notes.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_merge_encodes_spaces_in_resource_references(tmp_path):
+    from mineru_ocr.publish import validate_output
+    job = make_job(tmp_path)
+    root = tmp_path / 'extract-1'
+    (root / 'images/图 (1).png').write_bytes(b'image')
+    (root / 'full.md').write_text('![a](<images/图 (1).png>)', encoding='utf-8')
+    output = merge_job(job)
+    assert validate_output(output)['asset_count'] == 2

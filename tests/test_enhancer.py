@@ -151,3 +151,157 @@ def test_image_analysis_receives_document_context_and_chunks_keep_it(tmp_path):
     assert image_chunk["section_path"] == context["section_path"]
     assert "图 A.0.2" in image_chunk["text"]
     assert image_chunk["metadata"]["context"]["caption"] == context["caption"]
+
+
+def _run_source(tmp_path, text, name="report.md", client=None):
+    source = tmp_path / name
+    source.write_text(text, encoding="utf-8")
+    result = enhance_output(source, client=client or FakeEnhancementClient())
+    rows = [json.loads(line) for line in Path(result["ai_jsonl"]).read_text(encoding="utf-8").splitlines()]
+    assert source.read_text(encoding="utf-8") == text
+    return result, rows
+
+
+def test_empty_table_cells_do_not_shift_values(tmp_path):
+    _, rows = _run_source(tmp_path, '<table><tr><th>Item</th><th>Min</th><th>Max</th></tr>'
+                          '<tr><td>A</td><td></td><td>20</td></tr></table>')
+    assert "| A |  | 20 |" in "\n".join(row["text"] for row in rows)
+
+
+def test_matching_header_label_does_not_swallow_first_data_row(tmp_path):
+    _, rows = _run_source(tmp_path, '<table><tr><th>Type</th><th>Description</th></tr>'
+                          '<tr><td>Type</td><td>value A</td></tr><tr><td>B</td><td>value B</td></tr></table>')
+    assert "| Type | value A |" in "\n".join(row["text"] for row in rows)
+
+
+def test_numeric_source_lines_are_preserved(tmp_path):
+    _, rows = _run_source(tmp_path, "# Values\n900\n1/2\n")
+    body = "\n".join(row["text"] for row in rows if row["type"] == "text")
+    assert "\n900\n1/2" in body
+
+
+def test_only_current_document_images_are_analyzed(tmp_path):
+    (tmp_path / "assets").mkdir()
+    for name in ["a.png", "b.png"]:
+        (tmp_path / "assets" / name).write_bytes(name.encode())
+    result, rows = _run_source(tmp_path, "# A\n![A](assets/a.png)\n")
+    assert result["image_count"] == 1
+    assert [row["source_ref"] for row in rows if row["type"] == "image"] == ["assets/a.png"]
+
+
+def test_dotted_source_names_do_not_overwrite_each_other(tmp_path):
+    first, _ = _run_source(tmp_path, "# First", "report.v1.md")
+    original = Path(first["ai_jsonl"]).read_bytes()
+    second, _ = _run_source(tmp_path, "# Second", "report.v2.md")
+    assert Path(first["ai_jsonl"]).name == "report.v1.ai.jsonl"
+    assert Path(second["ai_jsonl"]).name == "report.v2.ai.jsonl"
+    assert Path(first["ai_jsonl"]).read_bytes() == original
+
+
+def test_page_boundary_flushes_previous_source_range(tmp_path):
+    _, rows = _run_source(tmp_path, "<!-- MinerU source pages 1-2 -->\n# First\nA\n"
+                          "<!-- MinerU source pages 3-4 -->\n# Second\nB\n")
+    texts = [row for row in rows if row["type"] == "text"]
+    assert [row["page_range"] for row in texts] == [[1, 2], [3, 4]]
+
+
+def test_html_image_keeps_reference_and_context(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/a.png").write_bytes(b"image")
+    _, rows = _run_source(tmp_path, '# Image\n<img src="assets/a.png" alt="A">\n图 1 示例\n')
+    assert any("assets/a.png" in row["assets"] for row in rows if row["type"] == "text")
+    image = next(row for row in rows if row["type"] == "image")
+    assert image["section_path"] == ["Image"]
+    assert image["metadata"]["context"]["caption"] == "图 1 示例"
+
+
+def test_long_single_line_reaches_model_without_truncation(tmp_path):
+    from mineru_ocr.doubao_client import DoubaoClient
+    client = object.__new__(DoubaoClient)
+    sent = []
+    def chat(messages):
+        sent.append(messages[0]["content"])
+        return '{"sections": [], "entities": [], "cross_references": [], "tags": []}'
+    client._chat = chat
+    result, rows = _run_source(tmp_path, "# Long\n" + "x" * 90_000 + "TAIL_REQUIRED", client=client)
+    assert sum(message.count("x") for message in sent) == 90_000
+    assert "TAIL_REQUIRED" in sent[-1]
+    assert all("[…truncated…]" not in message for message in sent)
+    assert max(len(row["text"]) for row in rows if row["type"] == "text") <= 8000
+
+
+def test_published_enrichment_keeps_asset_identity_and_exact_locator(tmp_path):
+    from mineru_ocr.publish import publish_output
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/figure.png").write_bytes(b"image")
+    md = tmp_path / "source.md"
+    md.write_text("# Figure\n![a](assets/figure.png)\n", encoding="utf-8")
+    (tmp_path / "source.manifest.json").write_text(json.dumps({
+        "source_sha256": "b" * 64,
+        "asset_locations": {"assets/figure.png": [{"precision": "page_bbox", "page": 7,
+          "page_range": [7, 7], "bbox": [1, 2, 30, 40], "coordinate_system": "mineru_content_list_normalized_0_1000"}]}
+    }), encoding="utf-8")
+    before = enhance_output(md, client=FakeEnhancementClient())
+    published = publish_output(md, tmp_path / "out")
+    after = enhance_output(published["markdown"], client=FakeEnhancementClient())
+    def image(path):
+        return next(json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if json.loads(line)["type"] == "image")
+    a, b = image(before["ai_jsonl"]), image(after["ai_jsonl"])
+    assert a["asset_id"] == b["asset_id"]
+    assert a["id"] == b["id"]
+    assert b["page_range"] == [7, 7]
+    assert b["source_locations"][0]["bbox"] == [1, 2, 30, 40]
+    assert b["provenance_kind"] == "ai_generated"
+    assert b["review_status"] == "unreviewed"
+
+
+def test_native_svg_is_preserved_and_explicitly_not_sent_as_jpeg(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/native.svg").write_text('<svg/>', encoding="utf-8")
+    client = FakeEnhancementClient()
+    _, rows = _run_source(tmp_path, "# Vector\n![v](assets/native.svg)", client=client)
+    image = next(row for row in rows if row["type"] == "image")
+    assert image["analysis_status"] == "unsupported"
+    assert client.image_contexts == []
+    assert image["assets"] == ["assets/native.svg"]
+
+
+def test_model_cannot_override_asset_reference(tmp_path):
+    class BadClient(FakeEnhancementClient):
+        def analyze_image(self, path, *, context=None):
+            return {**super().analyze_image(path, context=context), "file": "wrong.png", "asset_id": "wrong", "context": {}}
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/a.png").write_bytes(b"a")
+    _, rows = _run_source(tmp_path, "# Source\n![a](assets/a.png)", client=BadClient())
+    image = next(row for row in rows if row["type"] == "image")
+    assert image["source_ref"] == "assets/a.png"
+    assert image["asset_id"].startswith("asset-")
+
+
+def test_visual_failure_is_exposed_in_coverage(tmp_path):
+    class BrokenClient(FakeEnhancementClient):
+        def analyze_image(self, path, *, context=None):
+            return {"summary": ["invalid type"]}
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets/a.png").write_bytes(b"a")
+    result, rows = _run_source(tmp_path, "![a](assets/a.png)", client=BrokenClient())
+    image = next(row for row in rows if row["type"] == "image")
+    assert image["analysis_status"] == "failed"
+    assert result["image_coverage"]["failed"] == 1
+    assert image["review_status"] == "needs_review"
+
+
+def test_reference_style_image_in_another_section_is_still_linked(tmp_path):
+    (tmp_path / 'assets').mkdir()
+    (tmp_path / 'assets/a.png').write_bytes(b'image')
+    _, rows = _run_source(tmp_path, '# Figure\n![A][figure]\n\n# Links\n[figure]: assets/a.png\n')
+    assert any(row['type'] == 'text' and 'assets/a.png' in row['assets'] for row in rows)
+
+
+def test_duplicate_image_content_has_unique_chunk_ids(tmp_path):
+    (tmp_path / 'assets').mkdir()
+    for name in ['a.png', 'b.png']:
+        (tmp_path / 'assets' / name).write_bytes(b'same-image')
+    _, rows = _run_source(tmp_path, '# Images\n![A](assets/a.png)\n![B](assets/b.png)\n')
+    ids = [row['id'] for row in rows]
+    assert len(ids) == len(set(ids))

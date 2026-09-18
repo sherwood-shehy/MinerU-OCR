@@ -1,4 +1,4 @@
 interface:
   display_name: "MinerU OCR"
-  short_description: "Parse and merge long documents with MinerU OCR"
-  default_prompt: "Use $mineru-ocr to OCR this local document and save a merged Markdown result."
+  short_description: "Publish cited PDF knowledge assets with optional visual AI"
+  default_prompt: "Use $mineru-ocr to convert this document into Markdown with validated assets and source references, adding visual understanding when requested."

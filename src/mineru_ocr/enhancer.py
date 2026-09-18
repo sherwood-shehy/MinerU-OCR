@@ -8,14 +8,22 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
+from collections import Counter
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import unquote, urlsplit
 
-from .doubao_client import DoubaoClient
+from . import __version__
+from .doubao_client import DoubaoClient, VISUAL_PROMPT_VERSION
 from .errors import MinerUOCRError
+from .provenance import build_manifest, stable_id
+from .publish import validate_output
+from .references import expand_image_references, references
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
@@ -26,7 +34,6 @@ TEXT_ANALYSIS_CHARS = 40_000
 HTML_TABLE = re.compile(r"<table\b.*?</table>", re.I | re.S)
 HTML_BREAK = re.compile(r"<br\s*/?>", re.I)
 HTML_BLOCK = re.compile(r"</?(?:p|div|section|article|header|footer|li|ul|ol|tbody|thead|tfoot)\b[^>]*>", re.I)
-HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
 
 
 class EnhancementError(MinerUOCRError):
@@ -69,8 +76,10 @@ def enhance_output(
         Path and coverage metadata for the generated JSONL file.
     """
     source = _resolve_source(path)
+    validate_output(source.markdown_path)
+    manifest = build_manifest(source.markdown_path)
     markdown = source.markdown_path.read_text(encoding="utf-8")
-    images = _collect_images(source)
+    images = [source.root / asset['path'] for asset in manifest['assets'] if asset['kind'] == 'image']
 
     owns_client = client is None
     if owns_client:
@@ -79,13 +88,18 @@ def enhance_output(
     clean_markdown = _clean_markdown(markdown)
     image_contexts = _extract_image_contexts(clean_markdown)
     try:
-        image_results = _analyze_images(client, source, images, image_contexts)
+        image_results = _analyze_images(client, source, images, image_contexts, manifest)
         text_result, text_coverage = _analyze_text(client, clean_markdown, original_chars=len(markdown))
     finally:
         if owns_client and isinstance(client, DoubaoClient):
             client.close()
 
-    chunks = _build_chunks(clean_markdown, image_results, text_result, text_coverage, source)
+    chunks = _build_chunks(clean_markdown, image_results, text_result, text_coverage, source, manifest)
+    generation = {'model': getattr(client, 'model', None), 'provider': type(client).__name__,
+                  'prompt_version': VISUAL_PROMPT_VERSION, 'pipeline_version': __version__,
+                  'generated_at': datetime.now(timezone.utc).isoformat()}
+    for chunk in chunks:
+        chunk['generation'] = generation
     return _write_outputs(source, chunks, image_results, text_coverage)
 
 
@@ -118,36 +132,74 @@ def _resolve_source(raw_path: str | Path) -> EnhancementSource:
     raise EnhancementError(f"Expected a MinerU result directory or Markdown file: {path}")
 
 
-def _collect_images(source: EnhancementSource) -> list[Path]:
-    if source.assets_dir is None:
-        return []
-    return sorted(
-        path for path in source.assets_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-    )
-
-
 def _analyze_images(
     client: EnhancementClient,
     source: EnhancementSource,
     images: list[Path],
     image_contexts: dict[str, dict],
+    manifest: dict,
 ) -> list[dict]:
     results: list[dict] = []
+    assets = {asset['path']: asset for asset in manifest['assets']}
+    analyzed: dict[str, dict] = {}
     for image in images:
         relative = image.relative_to(source.root).as_posix()
-        context = image_contexts.get(relative) or image_contexts.get(Path(relative).name) or {}
+        context = image_contexts.get(relative) or {}
+        asset = assets[relative]
+        if asset['asset_id'] in analyzed:
+            prior = analyzed[asset['asset_id']]
+            prior['asset_paths'].append(relative)
+            prior['source_references'].extend(asset['references'])
+            for location in asset['locations']:
+                if location not in prior['source_locations']:
+                    prior['source_locations'].append(location)
+            continue
+        trusted = {'file': relative, 'context': context, 'asset_id': asset['asset_id'],
+                   'asset_paths': [relative],
+                   'source_locations': list(asset['locations']), 'source_references': list(asset['references'])}
+        if image.suffix.lower() not in IMAGE_EXTENSIONS:
+            results.append({**trusted, 'analysis_status': 'unsupported', 'review_status': 'needs_review',
+                            'error': 'Native asset retained; this vision transport does not support its format'})
+            analyzed[asset['asset_id']] = results[-1]
+            continue
         try:
-            semantics = client.analyze_image(image, context=context)
+            semantics = _validate_visual(client.analyze_image(image, context=context))
         except Exception as exc:  # tolerate single-image failures
             results.append({
-                "file": relative,
-                "context": context,
+                **trusted, 'analysis_status': 'failed', 'review_status': 'needs_review',
                 "error": str(exc),
             })
+            analyzed[asset['asset_id']] = results[-1]
             continue
-        results.append({"file": relative, "context": context, **semantics})
+        review = 'needs_review' if semantics.get('uncertainty') or semantics.get('context_consistency') == 'low' else 'unreviewed'
+        results.append({**semantics, **trusted, 'analysis_status': 'ok', 'review_status': review})
+        analyzed[asset['asset_id']] = results[-1]
     return results
+
+
+def _validate_visual(value: object) -> dict:
+    if not isinstance(value, dict) or not isinstance(value.get('summary'), str):
+        raise EnhancementError('Visual result must be an object with a string summary')
+    cleaned = {}
+    for field in ['type', 'summary', 'visual_description', 'contextual_interpretation', 'context_consistency', 'uncertainty']:
+        item = value.get(field, '')
+        if not isinstance(item, str):
+            raise EnhancementError(f'Invalid visual field: {field}')
+        cleaned[field] = item
+    for field in ['elements', 'key_findings', 'keywords', 'visible_text']:
+        item = value.get(field, [])
+        if not isinstance(item, list) or not all(isinstance(entry, str) for entry in item):
+            raise EnhancementError(f'Invalid visual field: {field}')
+        cleaned[field] = item
+    for field, required in [('dimensions', ['label', 'value_text', 'unit_text', 'basis']),
+                            ('relationships', ['from', 'to', 'relation', 'basis'])]:
+        item = value.get(field, [])
+        if not isinstance(item, list) or not all(isinstance(entry, dict) and all(isinstance(entry.get(key), str) for key in required) for entry in item):
+            raise EnhancementError(f'Invalid visual field: {field}')
+        if any(entry['basis'] not in ({'visual'} if field == 'dimensions' else {'visual', 'context'}) for entry in item):
+            raise EnhancementError(f'Invalid evidence basis: {field}')
+        cleaned[field] = [{key: entry[key] for key in required} for entry in item]
+    return cleaned
 
 
 def _analyze_text(client: EnhancementClient, markdown: str, *, original_chars: int | None = None) -> tuple[dict, dict]:
@@ -163,25 +215,21 @@ def _analyze_text(client: EnhancementClient, markdown: str, *, original_chars: i
 
 
 def _segment_text(markdown: str, limit: int = TEXT_ANALYSIS_CHARS) -> list[str]:
-    lines = markdown.splitlines()
+    if limit < 1:
+        raise ValueError("Segment limit must be positive")
     segments: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for line in lines:
-        is_heading = bool(HEADING.match(line))
-        if current and current_len + len(line) + 1 > limit and is_heading:
-            segments.append("\n".join(current).strip())
-            current = []
-            current_len = 0
-        current.append(line)
-        current_len += len(line) + 1
-        if current_len >= int(limit * 1.25):
-            segments.append("\n".join(current).strip())
-            current = []
-            current_len = 0
+    current = ""
+    for line in markdown.splitlines(keepends=True):
+        if current and len(current) + len(line) > limit:
+            segments.append(current)
+            current = ""
+        while len(line) > limit:
+            segments.append(line[:limit])
+            line = line[limit:]
+        current += line
     if current:
-        segments.append("\n".join(current).strip())
-    return [segment for segment in segments if segment]
+        segments.append(current)
+    return [segment for segment in segments if segment.strip()]
 
 
 def _merge_text_results(results: list[dict]) -> dict:
@@ -218,6 +266,10 @@ def _extract_image_contexts(markdown: str, *, window: int = 8) -> dict[str, dict
     current_pages: tuple[int | None, int | None] = (None, None)
     contexts: dict[str, dict] = {}
     image_index = 0
+    by_line: dict[int, list] = {}
+    for ref in references(markdown):
+        if ref.image:
+            by_line.setdefault(ref.line - 1, []).append(ref)
 
     for index, line in enumerate(lines):
         pages = SOURCE_PAGES.search(line)
@@ -230,26 +282,20 @@ def _extract_image_contexts(markdown: str, *, window: int = 8) -> dict[str, dict
             title = heading.group("title").strip()
             section_stack = section_stack[: level - 1] + [title]
 
-        match = MARKDOWN_IMAGE.search(line)
-        if not match:
-            continue
-        image_index += 1
-        target = match.group("target").strip("<>")
-        caption = _find_caption(lines, index)
-        before = _nearby_text(lines, index - 1, -1, -1, window)
-        after = _nearby_text(lines, index + 1, len(lines), 1, window)
-        context = {
-            "image_index": image_index,
-            "image_ref": target,
-            "section_path": list(section_stack),
-            "page_range": list(current_pages) if all(current_pages) else None,
-            "caption": caption,
-            "nearby_text_before": before,
-            "nearby_text_after": after,
-            "document_hint": _document_hint(section_stack, caption, before, after),
-        }
-        contexts[target] = context
-        contexts[Path(target).name] = context
+        for ref in by_line.get(index, []):
+            image_index += 1
+            target = Path(unquote(urlsplit(ref.target).path)).as_posix()
+            caption = _find_caption(lines, index)
+            before = _nearby_text(lines, index - 1, -1, -1, window)
+            after = _nearby_text(lines, index + 1, len(lines), 1, window)
+            context = {
+                "image_index": image_index, "image_ref": target,
+                "section_path": list(section_stack),
+                "page_range": list(current_pages) if all(current_pages) else None,
+                "caption": caption, "nearby_text_before": before, "nearby_text_after": after,
+                "document_hint": _document_hint(section_stack, caption, before, after),
+            }
+            contexts.setdefault(target, context)
     return contexts
 
 
@@ -315,8 +361,6 @@ def _clean_markdown(markdown: str) -> str:
     blank = False
     for raw in markdown.splitlines():
         line = raw.rstrip()
-        if _is_noise_line(line):
-            continue
         if not line:
             if not blank:
                 lines.append("")
@@ -337,18 +381,30 @@ class _HTMLTableParser(HTMLParser):
         self._current_rowspan = 1
         self._column = 0
         self._pending_rowspans: dict[int, tuple[int, str]] = {}
+        self.header_rows: list[bool] = []
+        self.first_row_header_depth = 0
+        self._has_th = False
+        self._has_td = False
+        self._rowspan = 1
+        self._has_colspan = False
 
     def handle_starttag(self, tag: str, attrs):
         name = tag.lower()
         if name == "tr":
             self._current_row = []
             self._column = 0
+            self._has_th = self._has_td = self._has_colspan = False
+            self._rowspan = 1
         elif name in {"td", "th"}:
             self._flush_pending_cells()
             self._current_cell = []
             attr_map = {key.lower(): value for key, value in attrs}
             self._current_colspan = _parse_span(attr_map.get("colspan"))
             self._current_rowspan = _parse_span(attr_map.get("rowspan"))
+            self._has_th |= name == "th"
+            self._has_td |= name == "td"
+            self._has_colspan |= self._current_colspan > 1
+            self._rowspan = max(self._rowspan, self._current_rowspan)
         elif name == "br" and self._current_cell is not None:
             self._current_cell.append(" ")
 
@@ -368,7 +424,10 @@ class _HTMLTableParser(HTMLParser):
         elif name == "tr" and self._current_row is not None:
             self._flush_pending_cells(to_end=True)
             if any(cell for cell in self._current_row):
+                if not self.rows and self._has_colspan and self._rowspan > 1:
+                    self.first_row_header_depth = self._rowspan
                 self.rows.append(self._current_row)
+                self.header_rows.append(self._has_th and not self._has_td)
             self._current_row = None
 
     def handle_data(self, data: str):
@@ -387,6 +446,7 @@ class _HTMLTableParser(HTMLParser):
         if to_end:
             for column in sorted(col for col in self._pending_rowspans if col >= self._column):
                 while self._column < column:
+                    self._current_row.append("")
                     self._column += 1
                 if column in self._pending_rowspans:
                     remaining, text = self._pending_rowspans.pop(column)
@@ -404,23 +464,47 @@ def _normalize_html(markdown: str) -> str:
         table_index += 1
         return "\n\n" + _html_table_to_ai_text(match.group(0), table_index) + "\n\n"
 
-    text = HTML_TABLE.sub(replace_table, markdown)
+    def replace_image(match: re.Match) -> str:
+        class ImageParser(HTMLParser):
+            target = ""
+            alt = ""
+            def handle_starttag(self, tag, attrs):
+                values = dict(attrs)
+                self.target = values.get("src") or ""
+                self.alt = values.get("alt") or ""
+        parser = ImageParser()
+        parser.feed(match.group(0))
+        target = parser.target.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+        return f"![{parser.alt.replace(']', '')}]({target})" if target else match.group(0)
+
+    text = re.sub(r"<img\b[^>]*>", replace_image, expand_image_references(markdown), flags=re.I)
+    text = HTML_TABLE.sub(replace_table, text)
     text = HTML_BREAK.sub("\n", text)
     text = HTML_BLOCK.sub("\n", text)
-    text = HTML_TAG.sub("", text)
     return unescape(text)
 
 
 def _html_table_to_ai_text(html: str, table_index: int) -> str:
     parser = _HTMLTableParser()
     parser.feed(html)
-    rows = [[cell for cell in row if cell] for row in parser.rows]
+    rows = parser.rows
     rows = [row for row in rows if row]
     if not rows:
         return f"表格 {table_index}: （空表或无法解析）"
 
     lines = [f"表格 {table_index}:"]
-    header, data_start = _choose_table_header(rows)
+    depth = 0
+    for is_header in parser.header_rows:
+        if not is_header:
+            break
+        depth += 1
+    depth = depth or parser.first_row_header_depth
+    depth = min(depth, len(rows))
+    header = rows[0] if depth else None
+    for row in rows[1:depth]:
+        width = max(len(header), len(row))
+        header = _merge_header_rows(_pad_row(header, width), _pad_row(row, width))
+    data_start = depth
     data_rows = rows[data_start:] if header else rows
     width = max([len(header or [])] + [len(row) for row in data_rows])
     if not header:
@@ -434,21 +518,6 @@ def _html_table_to_ai_text(html: str, table_index: int) -> str:
     return "\n".join(lines)
 
 
-def _choose_table_header(rows: list[list[str]]) -> tuple[list[str] | None, int]:
-    if len(rows) < 2:
-        return None, 0
-    first = rows[0]
-    second = rows[1]
-    if len(first) == len(second):
-        if len(set(first)) < len(first) or any(upper == lower for upper, lower in zip(first, second)):
-            merged = _merge_header_rows(first, second)
-            return [_dedupe_header(cell, index) for index, cell in enumerate(merged, start=1)], 2
-        return [_dedupe_header(cell, index) for index, cell in enumerate(first, start=1)], 1
-    if len(second) > len(first):
-        return [_dedupe_header(cell, index) for index, cell in enumerate(second, start=1)], 2
-    return [_dedupe_header(cell, index) for index, cell in enumerate(first, start=1)], 1
-
-
 def _merge_header_rows(first: list[str], second: list[str]) -> list[str]:
     merged: list[str] = []
     for upper, lower in zip(first, second):
@@ -459,10 +528,6 @@ def _merge_header_rows(first: list[str], second: list[str]) -> list[str]:
         else:
             merged.append(f"{upper}/{lower}")
     return merged
-
-
-def _dedupe_header(value: str, index: int) -> str:
-    return value.strip() or f"列{index}"
 
 
 def _compact_inline_text(value: str) -> str:
@@ -485,62 +550,18 @@ def _escape_markdown_table_cell(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ").strip()
 
 
-def _is_noise_line(line: str) -> bool:
-    text = line.strip()
-    if not text:
-        return False
-    if re.fullmatch(r"[-_=.·\s]{6,}", text):
-        return True
-    if re.fullmatch(r"\d+\s*/\s*\d+|\d+", text):
-        return True
-    return bool(re.search(r"\.{5,}\s*\d+\s*$", text))
-
-
-def _image_results_by_target(image_results: list[dict]) -> dict[str, dict]:
-    lookup: dict[str, dict] = {}
-    for result in image_results:
-        file = str(result.get("file", "")).strip()
-        if file:
-            lookup[file] = result
-            lookup[Path(file).name] = result
-    return lookup
-
-
-def _insert_image_semantics(markdown: str, image_by_target: dict[str, dict]) -> str:
-    output: list[str] = []
-    for line in markdown.splitlines():
-        output.append(line)
-        match = MARKDOWN_IMAGE.search(line)
-        if not match:
-            continue
-        target = match.group("target").strip("<>")
-        result = image_by_target.get(target) or image_by_target.get(Path(target).name)
-        if not result:
-            continue
-        if result.get("error"):
-            output.append(f"> AI image note: analysis failed for `{result.get('file')}`.")
-            continue
-        summary = str(result.get("summary", "")).strip()
-        contextual = str(result.get("contextual_interpretation", "")).strip()
-        findings = [str(item).strip() for item in result.get("key_findings", []) if str(item).strip()]
-        if summary:
-            output.append(f"> AI image summary: {summary}")
-        if contextual and contextual != summary:
-            output.append(f"> AI image context: {contextual}")
-        for finding in findings:
-            output.append(f"> AI image finding: {finding}")
-    return "\n".join(output).strip() + "\n"
-
-
 def _build_chunks(
     markdown: str,
     image_results: list[dict],
     text_result: dict,
     text_coverage: dict,
     source: EnhancementSource,
+    manifest: dict,
 ) -> list[dict]:
+    doc_id = manifest['doc_id']
+    assets_by_path = {asset['path']: asset for asset in manifest['assets']}
     chunks: list[dict] = [{
-        "id": "metadata-0000",
+        "id": stable_id('metadata', doc_id),
         "type": "document_metadata",
         "section_path": [],
         "page_range": None,
@@ -553,11 +574,14 @@ def _build_chunks(
             "text_analysis": text_result,
             "text_coverage": text_coverage,
             "image_count": len(image_results),
+            'document_manifest': manifest,
         },
+        'provenance_kind': 'ai_generated', 'review_status': 'unreviewed',
     }]
     section_stack: list[str] = []
     current_lines: list[str] = []
     current_pages: tuple[int | None, int | None] = (None, None)
+    duplicate_counts: Counter = Counter()
 
     def flush() -> None:
         nonlocal current_lines
@@ -565,20 +589,31 @@ def _build_chunks(
         if not text:
             current_lines = []
             return
-        chunks.append({
-            "id": f"text-{len(chunks):04d}",
-            "type": "text",
-            "section_path": list(section_stack),
-            "page_range": list(current_pages) if all(current_pages) else None,
-            "text": text,
-            "source_ref": str(Path("markdown")),
-            "assets": _assets_in_text(text),
-        })
+        for segment in _segment_text(text, limit=8000):
+            paths = _assets_in_text(segment)
+            asset_ids = [assets_by_path[path]['asset_id'] for path in paths if path in assets_by_path]
+            canonical = segment
+            for path in sorted(assets_by_path, key=len, reverse=True):
+                canonical = canonical.replace(path, assets_by_path[path]['asset_id'])
+            basis = json.dumps([section_stack, current_pages, canonical], ensure_ascii=False)
+            occurrence = duplicate_counts[basis]
+            duplicate_counts[basis] += 1
+            pages = list(current_pages) if all(current_pages) else None
+            chunks.append({
+                "id": stable_id('text', doc_id, basis, str(occurrence)),
+                "type": "text", "section_path": list(section_stack), "page_range": pages,
+                "text": segment,
+                "source_ref": source.markdown_path.name,
+                "assets": paths, 'asset_ids': asset_ids,
+                'source_locations': [{'precision': 'page_range' if pages else 'unknown', 'page_range': pages}],
+                'provenance_kind': 'source_normalized', 'review_status': 'not_applicable',
+            })
         current_lines = []
 
     for line in markdown.splitlines():
         pages = SOURCE_PAGES.search(line)
         if pages:
+            flush()
             current_pages = (int(pages.group("start")), int(pages.group("end")))
             continue
         heading = HEADING.match(line)
@@ -597,17 +632,33 @@ def _build_chunks(
             str(context.get("caption") or "").strip(),
             str(image.get("summary") or image.get("error") or "").strip(),
             str(image.get("contextual_interpretation") or "").strip(),
+            str(image.get('visual_description') or ''),
+            '\n'.join(image.get('visible_text') or []),
+            '\n'.join(image.get('key_findings') or []),
         ]
+        for field in ['dimensions', 'relationships']:
+            if image.get(field):
+                text_parts.append(json.dumps({field: image[field]}, ensure_ascii=False))
+        locations = image['source_locations']
+        pages = [location['page'] for location in locations if location.get('page')]
         chunks.append({
-            "id": f"image-{len(chunks):04d}",
+            "id": stable_id('visual', image['asset_id']),
+            'asset_id': image['asset_id'], 'asset_ids': [image['asset_id']],
             "type": "image",
             "section_path": context.get("section_path") or [],
-            "page_range": context.get("page_range"),
+            "page_range": [min(pages), max(pages)] if pages and len(pages) == len(locations) else context.get("page_range"),
+            'source_locations': locations,
             "text": "\n".join(part for part in text_parts if part),
             "source_ref": file,
-            "assets": [file] if file else [],
+            "assets": image['asset_paths'],
             "metadata": image,
+            'analysis_status': image['analysis_status'], 'review_status': image['review_status'],
+            'provenance_kind': 'ai_generated',
         })
+    for chunk in chunks:
+        chunk['doc_id'] = doc_id
+        chunk['source_version'] = manifest['source_version']
+        chunk['schema_version'] = '1.0'
     return chunks
 
 
@@ -642,9 +693,11 @@ def _document_metadata_text(text_result: dict) -> str:
 
 def _assets_in_text(text: str) -> list[str]:
     assets: list[str] = []
-    for match in MARKDOWN_IMAGE.finditer(text):
-        target = match.group("target").strip("<>")
-        if target not in assets:
+    for ref in references(text):
+        if urlsplit(ref.target).scheme or urlsplit(ref.target).netloc:
+            continue
+        target = Path(unquote(urlsplit(ref.target).path)).as_posix()
+        if ref.image and target not in assets:
             assets.append(target)
     return assets
 
@@ -656,82 +709,22 @@ def _write_outputs(
     text_coverage: dict,
 ) -> dict:
     base = source.root / source.stem
-    ai_jsonl = base.with_suffix(".ai.jsonl")
+    ai_jsonl = base.with_name(base.name + ".ai.jsonl")
 
-    ai_jsonl.write_text(
-        "".join(json.dumps(chunk, ensure_ascii=False) + "\n" for chunk in chunks),
-        encoding="utf-8",
-    )
+    coverage = dict(Counter(image['analysis_status'] for image in image_results))
+    coverage = {key: coverage.get(key, 0) for key in ['ok', 'failed', 'unsupported']}
+    chunks[0]['metadata']['image_coverage'] = coverage
+    temporary = ai_jsonl.with_name('.' + ai_jsonl.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text("".join(json.dumps(chunk, ensure_ascii=False) + "\n" for chunk in chunks), encoding="utf-8")
+        temporary.replace(ai_jsonl)
+    finally:
+        temporary.unlink(missing_ok=True)
     return {
         "enhanced": True,
         "ai_jsonl": str(ai_jsonl),
         "chunk_count": len(chunks),
         "image_count": len(image_results),
+        'image_coverage': coverage,
         "text_coverage": text_coverage,
     }
-
-
-# ---------- assembly ----------
-
-def _assemble(original: str, text_result: dict, image_results: list[dict]) -> str:
-    parts: list[str] = [original.rstrip(), "", "---", "", "> ## AI 增强元数据", ">"]
-
-    sections = text_result.get("sections") or []
-    if sections:
-        parts.append("> ### 章节摘要")
-        parts.append(">")
-        parts.append("> | 章节 | 摘要 |")
-        parts.append("> | ---- | ---- |")
-        for item in sections:
-            title = _escape_pipe(item.get("title", "").strip())
-            summary = _escape_pipe(item.get("summary", "").strip())
-            parts.append(f"> | {title} | {summary} |")
-        parts.append(">")
-
-    entities = text_result.get("entities") or []
-    if entities:
-        parts.append("> ### 实体与术语")
-        parts.append(">")
-        parts.append("> | 实体 | 类型 | 说明 |")
-        parts.append("> | ---- | ---- | ---- |")
-        for item in entities:
-            name = _escape_pipe(item.get("name", "").strip())
-            etype = _escape_pipe(item.get("type", "").strip())
-            description = _escape_pipe(item.get("description", "").strip())
-            parts.append(f"> | {name} | {etype} | {description} |")
-        parts.append(">")
-
-    references = text_result.get("cross_references") or []
-    if references:
-        parts.append("> ### 跨章节关系")
-        parts.append(">")
-        for line in references:
-            text = str(line).strip()
-            if text:
-                parts.append(f"> - {text}")
-        parts.append(">")
-
-    tags = text_result.get("tags") or []
-    if tags:
-        parts.append("> ### 标签")
-        parts.append(">")
-        rendered = " ".join(f"`#{str(tag).lstrip('#').strip()}`" for tag in tags if str(tag).strip())
-        parts.append(f"> {rendered}")
-        parts.append(">")
-
-    if image_results:
-        parts.append("> ### 图片语义")
-        parts.append(">")
-        # Quadruple backticks so the inner ```json is preserved verbatim
-        # inside the blockquote.
-        parts.append("> ````json")
-        json_text = json.dumps(image_results, ensure_ascii=False, indent=2)
-        for line in json_text.splitlines():
-            parts.append(f"> {line}")
-        parts.append("> ````")
-
-    return "\n".join(parts).rstrip() + "\n"
-
-
-def _escape_pipe(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", " ")

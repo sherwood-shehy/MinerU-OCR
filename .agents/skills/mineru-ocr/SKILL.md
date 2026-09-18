@@ -1,59 +1,59 @@
 ---
 name: mineru-ocr
-description: OCR local PDF and small Office documents with the MinerU cloud API, including logical page-range processing for long PDFs, physical splitting for PDFs over 200MB, resumable jobs, and merged Markdown output. Use when Codex needs to parse, OCR, export, resume, or inspect MinerU processing for PDF, DOC, DOCX, PPT, PPTX, XLS, or XLSX files.
+description: Convert local PDF and small Office documents with MinerU Cloud, publish Markdown with validated assets and source references, and optionally create visual-understanding JSONL for knowledge bases. Also use for offline publishing, validation, and resuming this tool's long-document jobs.
+metadata:
+  version: "0.2.0"
 ---
 
 # MinerU OCR
 
-Use the bundled `mineru-ocr` package or MCP server to turn local documents into Markdown. Treat every invocation as an upload of the selected document to MinerU Cloud.
+Use the `mineru-ocr` CLI. This host's maintenance source is `D:\Codex-home\projects\MinerU-OCR`; global skill copies are released from its `.agents/skills/mineru-ocr` directory. Do not use the removed MCP entry points or add another wrapper skill for these same tasks.
 
 ## Prepare
 
-1. Confirm that the user intends to send the named local files to MinerU Cloud when that was not already explicit.
-2. Check `mineru-ocr config show` without printing the Token itself. The environment variable takes precedence over the user configuration file.
-3. Install this repository once with `python -m pip install -e .`.
-4. Prefer the MCP tools when connected; otherwise run the CLI.
+- `process` and `submit` upload the selected files to MinerU Cloud. Confirm that intent only when the user's request has not already authorized it. `enhance` separately sends referenced images and document text to the configured Doubao service; run it when AI enhancement is requested.
+- `publish` and `validate` operate locally and need no service credentials.
+- Check `mineru-ocr --help`. If the executable is not on PATH, use `python -m mineru_ocr.cli`. If the package is missing, install from the maintenance repository using `python -m pip install -e .`, subject to the host's dependency-installation rules. Use the existing Python; do not create an environment implicitly.
+- For cloud work, use `mineru-ocr config show` to inspect configuration without printing keys. Configure only when needed using the interactive `config set-token` or `config set-doubao-key` commands. Never put credentials in command arguments or artifacts.
 
-Configure a per-machine plaintext MinerU Token with `mineru-ocr config set-token`. This prompts without echoing and writes the Token to the platform user configuration directory. Never place the Token in a command argument, repository file, manifest, or response.
+## Choose the workflow
 
-For optional AI enhancement, configure the Doubao key with `mineru-ocr config set-doubao-key` and enter `你的豆包apikey`. The default provider settings are `https://ark.cn-beijing.volces.com/api/coding/v3` and `doubao-seed-2.0-lite`. The Doubao key is local to this skill and must not be written to repository files, Markdown output, manifests, examples, or responses.
+Basic knowledge materials:
 
-## Process documents
+```text
+mineru-ocr process INPUT.pdf --output-dir OUTPUT
+```
 
-- Run `mineru-ocr process <file>` for a complete submit/wait/merge flow.
-- Run `mineru-ocr submit <file>` for an asynchronous job and preserve the returned local `job_id`.
-- Run `mineru-ocr status <job_id>` to refresh and automatically publish completed output.
-- Run `mineru-ocr resume <job_id>` after a transient or partial failure.
-- Run `mineru-ocr clean <job_id>` only when the user wants to discard unfinished job data.
-- Run `mineru-ocr enhance <path>` to generate an AI-oriented `<source>.ai.jsonl` file for an existing result directory or Markdown file.
+With requested visual understanding and text metadata:
 
-Use the matching `ocr_process`, `ocr_submit`, `ocr_status`, `ocr_resume`, `ocr_clean`, and `ocr_enhance` MCP tools when available.
+```text
+mineru-ocr process INPUT.pdf --output-dir OUTPUT --enhance
+```
 
-## Apply format rules
+Existing results, without repeating OCR:
 
-- Let the implementation count PDF pages locally.
-- For PDFs up to 200MB, upload the complete source once per 200-page range. Do not create local page fragments.
-- For PDFs over 200MB, let the implementation create size-safe physical PDF fragments.
-- Send small Office files directly. Optionally accept an explicit `office_page_ranges` option.
-- If an Office file exceeds MinerU size or page limits, ask the user to export it to PDF. Do not install or invoke LibreOffice.
+```text
+mineru-ocr publish RESULT_DIRECTORY_OR_MD --output-dir OUTPUT
+mineru-ocr validate PUBLISHED.md
+mineru-ocr enhance PUBLISHED.md
+```
 
-Defaults are `model_version=vlm`, `is_ocr=true`, `language=ch`, tables enabled, and formulas enabled.
+The last command is optional. Enhance the final published Markdown so JSONL references match the final asset paths. `publish` publishes source materials; it does not migrate an existing AI JSONL. Keep the original result package available, including any earlier enhancement, until the user chooses to remove it.
 
-## Return results
+For asynchronous work use `submit INPUT`, then `status JOB_ID`; use `resume JOB_ID` after partial failure. A timeout is not permission to resubmit. Return the existing job ID and state. Use `clean JOB_ID` only when unfinished job data should be discarded.
 
-- Process the original source path directly when possible. Do not copy or retain the source document in the final output directory; use temporary staging outside that directory only when the implementation requires it.
-- Place each final Markdown file directly in the user-selected output directory. Do not create a per-source wrapper directory.
-- Name the final Markdown `<source stem>.md` whenever the source stem is legal on the target filesystem. If that name already exists, choose a collision-free name such as `<source stem> (1).md`; never overwrite an existing file.
-- Consolidate referenced resources into one shared `<output directory>/assets/` directory. Flatten MinerU source/part subdirectories, choose collision-free resource names, and rewrite Markdown links to the final relative paths. Omit `assets/` when the document has no resources.
-- Optionally publish provenance as `<source stem>.manifest.json` directly in the output directory, using the same collision suffix as the Markdown when needed.
-- Verify the final Markdown and every rewritten resource reference, then delete the transient `full.md`, per-source `.mineru` directory, and any temporary source copy. Never delete or modify the original source document.
-- Retain and report `full.md` only when no legal source-derived Markdown filename can be created.
-- Report the final Markdown path.
+## Processing and delivery
 
-When AI enhancement is requested, report the generated `<source>.ai.jsonl` path. Treat the original Markdown as the evidence layer and the JSONL file as the derived AI consumption artifact. Do not report or preserve separate `ai.md`, `images.json`, or AI manifest files as final outputs.
+- Defaults: VLM, OCR enabled, language `ch`, tables and formulas enabled. PDFs are planned in ranges of up to 200 pages; oversized PDFs use physical fragments. These are the client's configured limits, not a guarantee about current service limits.
+- Small Office documents can be submitted directly. `--page-ranges` applies to Office inputs. Oversized Office files require user-provided PDF export; do not introduce LibreOffice into this workflow.
+- Let the publisher implement filename collision avoidance, shared resource naming, link rewriting and validation. Do not manually flatten directories or reconstruct its manifest.
+- Report the final Markdown and manifest; report AI JSONL only if generated. Basic output is `<name>.md`, `<name>.manifest.json`, optional shared `assets/` and `evidence/`. Existing document names are avoided with ` (1)` suffixes. Source documents and earlier result packages are retained.
+- Re-running `enhance` atomically replaces that Markdown's derived `.ai.jsonl`; the source Markdown stays unchanged. Report image failures/unsupported formats from `image_coverage`, even when the command produced a JSONL file.
 
-If a call times out, return the job ID and current state rather than resubmitting. If processing fails, include the MinerU error code and affected page range without exposing signed URLs.
+## Citation and visual interpretation
 
-## Troubleshoot
+Read [references/knowledge-materials.md](references/knowledge-materials.md) when preparing knowledge-base imports, citations, or interpreting visual outputs. Its contract defines stable IDs, evidence locations, review status and the limits of exact positioning.
 
-Read [references/mineru-api.md](references/mineru-api.md) only when troubleshooting API fields, limits, states, or error codes.
+Use manifest IDs and locations when citing assets. Never invent a page, bbox, dimension, unit or tolerance. A page range is not an exact page. Machine interpretation remains separate from source facts, and unreviewed results must not be described as verified.
+
+For API request fields and service errors, read [references/mineru-api.md](references/mineru-api.md). Return the affected range and error code without exposing signed URLs.

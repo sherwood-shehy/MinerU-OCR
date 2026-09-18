@@ -117,15 +117,15 @@ def status_job(job_id: str, *, refresh: bool = True) -> dict:
         with MinerUClient(_token()) as client:
             refresh_job(job, client)
             download_ready(job, client)
-            if all(part.state == "done" and part.full_md for part in job.parts):
-                output = merge_job(job)
-                job.state = "done"
-                job.completed_at = utc_now()
-                save_job(job)
-                result = public_job(job)
-                result["result_dir"] = str(output)
-                remove_job(job.job_id)
-                return result
+    if refresh and all(part.state == "done" and part.full_md for part in job.parts):
+        output = merge_job(job)
+        job.state = "done"
+        job.completed_at = utc_now()
+        save_job(job)
+        result = public_job(job)
+        result["result_dir"] = str(output)
+        remove_job(job.job_id)
+        return result
     return public_job(job)
 
 

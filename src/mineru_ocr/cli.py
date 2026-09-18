@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         _add_options(item)
         if name == "process":
             item.add_argument("--timeout", type=int, default=1800)
+            item.add_argument("--output-dir", type=Path, help="Publish checked Markdown and resources into this directory")
             item.add_argument(
                 "--enhance", action="store_true",
                 help="After OCR, generate an AI-oriented JSONL file via Doubao",
@@ -66,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate an AI-oriented JSONL file for an existing MinerU result",
     )
     enhance.add_argument("result_dir", help="Path to a *.mineru directory or a published Markdown file")
+    publish = sub.add_parser("publish", help="Publish existing results offline with checked references")
+    publish.add_argument("path")
+    publish.add_argument("--output-dir", type=Path, required=True)
+    publish.add_argument("--name", help="Optional output filename stem")
+    validate = sub.add_parser("validate", help="Check local resource references and manifest hashes offline")
+    validate.add_argument("path")
     config = sub.add_parser("config")
     config.add_argument(
         "action",
@@ -78,7 +85,7 @@ def _enhance_results(results: list[dict], *, best_effort: bool = False) -> None:
     """Run the AI enhancement layer for each completed process result in-place."""
     from .enhancer import enhance_output  # local import to avoid pulling httpx/etc when unused
     for result in results:
-        result_dir = result.get("result_dir")
+        result_dir = result.get("markdown") or result.get("result_dir")
         if not result_dir:
             result["enhanced"] = False
             result["enhance_error"] = "Skipped: no result_dir on this job"
@@ -94,13 +101,17 @@ def _enhance_results(results: list[dict], *, best_effort: bool = False) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Auto-load .env from the current working directory (or any ancestor) so
-    # local development just works after `cp .env.example .env`.
-    load_dotenv()
     args = build_parser().parse_args(argv)
+    if args.command not in {"publish", "validate"}:
+        load_dotenv()
     try:
         if args.command == "process":
             result = process_files(args.files, _options(args), args.timeout)
+            if args.output_dir:
+                from .publish import publish_output
+                for job in result:
+                    if job.get("result_dir"):
+                        job.update(publish_output(job["result_dir"], args.output_dir))
             if getattr(args, "enhance", False):
                 _enhance_results(result, best_effort=getattr(args, "enhance_best_effort", False))
         elif args.command == "submit":
@@ -114,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "enhance":
             from .enhancer import enhance_output
             result = enhance_output(args.result_dir)
+        elif args.command == "publish":
+            from .publish import publish_output
+            result = publish_output(args.path, args.output_dir, name=args.name)
+        elif args.command == "validate":
+            from .publish import validate_output
+            result = validate_output(args.path)
         elif args.action == "set-token":
             result = {"saved": True, "config_path": str(prompt_and_save_token())}
         elif args.action == "set-doubao-key":
@@ -125,8 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = config_status()
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    except (MinerUOCRError, FileNotFoundError, ValueError) as exc:
+        jobs = result if isinstance(result, list) else [result]
+        return 1 if any(job.get("state") == "failed" or job.get("timed_out") for job in jobs) else 0
+    except (MinerUOCRError, OSError, ValueError) as exc:
         print(json.dumps({"error": str(exc), "code": getattr(exc, "code", None)}, ensure_ascii=False), file=sys.stderr)
         return 1
 

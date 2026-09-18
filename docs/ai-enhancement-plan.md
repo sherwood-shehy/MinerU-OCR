@@ -1,5 +1,7 @@
 # mineru-ocr AI 增强层设计方案
 
+> 历史设计记录。当前 0.2.0 实现与交付规则以 [README](../README_zh-CN.md) 和 [知识素材契约](../.agents/skills/mineru-ocr/references/knowledge-materials.md) 为准。下面的“遍历 assets”、不修改 merge/service、全文上下文等早期约定不再作为执行依据。
+
 ## 一、背景与动机
 
 当前 `mineru-ocr` 将 PDF/Office 文档通过 MinerU Cloud 转为 Markdown，输出是**保留原格式的文本提取**——本质上还是给人类看的排版还原，不是给 AI 理解的语义结构。

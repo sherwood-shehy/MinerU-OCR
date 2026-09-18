@@ -2,11 +2,24 @@
 
 [简体中文](README_zh-CN.md) | English
 
-Long-document OCR orchestration for the [MinerU](https://mineru.net/) Cloud API, packaged as a Python CLI, an MCP server, and a reusable Agent Skill.
+Long-document OCR orchestration for the [MinerU](https://mineru.net/) Cloud API, packaged as a Python CLI and a reusable Agent Skill.
 
 MinerU OCR is designed for local PDFs that are larger than a single API request can safely handle. It plans page ranges, uploads and monitors each part, resumes partial failures, downloads the MinerU result archives, and merges the resulting Markdown and referenced assets in source-page order.
 
-> Documents processed by this project are uploaded to MinerU Cloud. Do not use it for data that must remain entirely on-device.
+> `process` and `submit` upload documents to MinerU Cloud. Optional `enhance` sends document text and referenced images to the configured Doubao service. `publish` and `validate` run locally without service credentials.
+
+## What's New in 0.2.0
+
+This release turns OCR results into traceable multimodal knowledge materials: source Markdown, an asset/provenance manifest, and optional AI-derived JSONL.
+
+- **Checked publication.** New `publish`, `validate`, and `process --output-dir` commands deliver Markdown with validated resources. Shared assets use content hashes, document names avoid collisions, and original documents and result bundles are retained.
+- **Stable identities and source evidence.** Manifests carry `doc_id`, `asset_id`, source versions, file hashes, and every resource occurrence. Compatible Content List V1 maps images to source PDF pages and bounding boxes; other cases explicitly record a page range or unknown location. Upstream layout JSON is retained in `evidence/`.
+- **Structured visual understanding.** Optional AI JSONL separates visible observations from contextual interpretation, with fields for mechanical dimensions, flowchart relationships, and chart content. Dimension, unit, and tolerance strings remain unconverted. Generation metadata, per-image failures, unsupported formats, and review status remain explicit; native SVG assets are preserved.
+- **Source fidelity and reliable references.** Fixes preserve empty table cells, numeric lines, HTML images, repeated references, and the correct page ranges. Full, collapsed, and shortcut references are supported; labels are isolated across merged parts so one part cannot redirect another part's image. Enhancement analyzes only the current document's images.
+- **Bounded processing and safer retries.** Long lines are split without silent truncation; model input segments are bounded at 40,000 characters and retrieval text chunks at 8,000. Dotted filenames retain distinct outputs, repeated enhancement atomically replaces only its JSONL, and a failed merge can resume after downloads finish.
+- **CLI and Skill consolidation.** `mineru-ocr` is the maintained entry point, with an updated Agent Skill and [knowledge-material contract](.agents/skills/mineru-ocr/references/knowledge-materials.md). Python 3.11+ is required; the previous `mineru-ocr-mcp` entry point and MCP dependency have been removed.
+
+Publish first, then enhance the final Markdown so JSONL references use the published asset paths. An `ok` AI result has passed structural validation and still requires review; it is not a verified technical conclusion.
 
 ## Background
 
@@ -29,7 +42,7 @@ This project implements that orchestration while leaving OCR inference to MinerU
 - **Ordered Markdown merge** — combines completed parts in original page order with invisible source-page markers.
 - **Asset rewriting** — safely extracts result ZIP files and rewrites relative Markdown/HTML resource links.
 - **Small Office support** — directly submits DOC/DOCX, PPT/PPTX, and XLS/XLSX files within the configured limits.
-- **CLI and MCP interfaces** — supports shell automation and structured Agent tool calls.
+- **CLI interface** — supports shell automation and Agent Skill workflows.
 - **Per-user credentials** — accepts `MINERU_API_TOKEN` or a local plaintext user configuration file without committing the token to the repository.
 
 ## When to Use Which MinerU Tool
@@ -43,7 +56,7 @@ This project implements that orchestration while leaving OCR inference to MinerU
 ## Architecture
 
 ```text
-Agent Skill / MCP tools / CLI
+Agent Skill / CLI
              │
              ▼
    Local planner and job store
@@ -66,11 +79,11 @@ Agent Skill / MCP tools / CLI
 
 ## Requirements
 
-- Python 3.10 or newer
+- Python 3.11 or newer
 - A MinerU API token from the [MinerU API management page](https://mineru.net/apiManage/docs)
 - Network access to MinerU and its signed upload/download endpoints
 
-Core dependencies are installed automatically: `httpx`, `pydantic`, `pypdf`, `platformdirs`, and the Python MCP SDK.
+Core dependencies are installed automatically: `httpx`, `pydantic`, `pypdf`, `platformdirs`, and `python-dotenv`.
 
 ## Installation
 
@@ -180,39 +193,6 @@ mineru-ocr config clear-token
 
 The `show` command reports only the configuration path and selected source; it never prints the token.
 
-## MCP Server
-
-The package exposes five tools:
-
-- `ocr_process`
-- `ocr_submit`
-- `ocr_status`
-- `ocr_resume`
-- `ocr_clean`
-
-Run over stdio:
-
-```bash
-mineru-ocr-mcp
-```
-
-Example Codex configuration in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.mineru_ocr]
-command = "mineru-ocr-mcp"
-args = ["--transport", "stdio"]
-tool_timeout_sec = 1900
-```
-
-Or run a local Streamable HTTP endpoint:
-
-```bash
-mineru-ocr-mcp --transport streamable-http --port 8182
-```
-
-The HTTP transport binds to `127.0.0.1` by default.
-
 ## Processing Rules
 
 ### PDFs up to 200 MB
@@ -246,14 +226,24 @@ document.pdf.mineru/
 └── manifest.json
 ```
 
-The Agent Skill additionally defines a publication policy for user-selected shared output directories:
+The offline `publish` command implements publication into user-selected directories. `process --output-dir` invokes it automatically:
 
 - publish `<source-stem>.md` directly in the selected directory;
 - avoid overwrites using names such as `<source-stem> (1).md`;
 - consolidate resources into a shared `assets/` directory and rewrite references;
-- optionally publish `<source-stem>.manifest.json`;
-- remove transient `.mineru` bundles only after validating the final Markdown and resources;
+- publish `<source-stem>.manifest.json` with document/asset IDs, hashes and source locations;
+- retain upstream layout JSON in `evidence/` and use content hashes for shared asset filenames;
+- validate references and retain the original `.mineru` result package;
 - never delete or modify the original source document.
+
+```bash
+mineru-ocr process report.pdf --output-dir knowledge
+mineru-ocr process report.pdf --output-dir knowledge --enhance
+mineru-ocr publish report.pdf.mineru --output-dir knowledge
+mineru-ocr validate knowledge/report.md
+```
+
+Publish source materials first, then enhance the published Markdown. `publish` does not migrate old AI JSONL files; earlier outputs remain in the source package. Re-running `enhance` atomically replaces only that Markdown's derived JSONL. See the [knowledge-material contract](.agents/skills/mineru-ocr/references/knowledge-materials.md) for IDs, precise/range/unknown locators, visual evidence, review status and ingestion rules.
 
 ## AI Enhancement
 
@@ -265,13 +255,15 @@ After MinerU extracts the raw Markdown, the optional AI enhancement layer create
 
 **Why AI enhancement?** MinerU produces human-readable Markdown that preserves the document's visual layout, tables, and images. This is excellent for reading, but AI agents consuming the output benefit from explicit metadata — knowing what a chart describes, which entities appear in each section, and how sections relate to each other — without having to re-read the entire document.
 
-**Single-model approach.** Rather than chaining a vision model for images and a separate LLM for text, the enhancement layer uses **one model** — Doubao-Seed-2.0-lite (via Volcengine Coding Plan) — for both tasks. This simplifies configuration, reduces the number of API dependencies, and ensures the model has full document context when extracting relationships.
+**Single-model approach.** The configured Doubao model handles both images and text. Each text call receives one bounded segment; full-document context and relationships across segments are not guaranteed.
 
 **Non-destructive by design.** The original Markdown is never touched. The AI output is written as a sibling `<source>.ai.jsonl` file. If OCR has already produced the Markdown, run `mineru-ocr enhance <markdown-or-result-dir>` directly; OCR is not repeated.
 
 **Chunked text analysis.** Long documents are analyzed in section-aware chunks instead of being silently truncated. Coverage metadata is stored in the first JSONL metadata record.
 
 **Per-image error tolerance.** A single corrupted or unrecognisable image does not block enhancement of the remaining images or the text analysis. Each image is processed independently, and errors are recorded in the output JSON per image.
+
+**Evidence and interpretation.** Visible text and dimension strings remain separate from contextual interpretations. Derived records carry model/prompt versions, source identity and review status. Native SVGs remain referenced but are marked unsupported by the current vision transport. Compatible legacy Content List V1 provides page/bbox locators; other cases explicitly retain range or unknown precision.
 
 **Credential isolation.** The Doubao API key is stored only in the local user configuration via `mineru-ocr config set-doubao-key`. It is not stored in repository files, generated Markdown, manifests, examples, or responses.
 
@@ -360,7 +352,7 @@ Run the offline suite:
 python -m pytest --basetemp .test-tmp -p no:cacheprovider
 ```
 
-The tests cover:
+Version 0.2.0 passed 68 offline tests on Python 3.12.2. The tests cover:
 
 - 199/200/201/400-page planning boundaries;
 - repeated full-file uploads with independent page ranges;
@@ -369,11 +361,16 @@ The tests cover:
 - Markdown merge order and asset collision isolation;
 - ZIP traversal protection;
 - API request shape;
-- credential precedence and cleanup.
+- credential precedence and cleanup;
+- offline publication, filename collisions, missing resources, hash verification, and copy retries;
+- stable IDs, source-page mapping, repeated references, and cross-part label isolation;
+- table and numeric fidelity, bounded text chunks, current-document image selection, and published-output enhancement.
 
 On restricted Windows environments, keep the explicit `--basetemp` option because the default user temporary directory may be inaccessible.
 
 ## Real-World Validation
+
+For 0.2.0, a separate offline acceptance run published an existing 1,545,149-byte Chinese Markdown document with 17 valid resources. Test-double AI responses exercised the enhancement pipeline, producing 251 JSONL records and 18 model input segments with unique IDs. Source content was unchanged apart from published resource targets, and enhancement left the published Markdown unchanged. This verifies local processing, not live OCR or vision-model accuracy.
 
 The workflow has been exercised on a 364-page Chinese technical standard. It completed as two logical ranges (`1-200`, `201-364`) and produced an ordered merged document with 156 headings, 327 HTML tables, and 12 image references. A comparison against the official CLI output showed approximately 99.35% visible-text similarity; the custom merge produced substantially more compact markup for one pathological table section.
 
@@ -381,7 +378,7 @@ The workflow has been exercised on a 364-page Chinese technical standard. It com
 
 ```text
 .agents/skills/mineru-ocr/   Agent Skill and MinerU API reference
-src/mineru_ocr/              CLI, MCP server, API client, planner, storage, and merge logic
+src/mineru_ocr/              CLI, API client, planner, storage, and merge logic
 tests/                       Offline unit tests
 pyproject.toml               Package metadata, dependencies, and command entry points
 ```
@@ -408,4 +405,3 @@ No project license has been declared yet. MinerU and its API are governed by the
 - [MinerU API documentation](https://mineru.net/apiManage/docs)
 - [MinerU open-source repository](https://github.com/opendatalab/MinerU)
 - [MinerU Ecosystem and official CLI](https://github.com/opendatalab/MinerU-Ecosystem)
-- [Model Context Protocol](https://modelcontextprotocol.io/)

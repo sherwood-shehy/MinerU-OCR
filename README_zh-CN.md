@@ -2,11 +2,24 @@
 
 简体中文 | [English](README.md)
 
-面向 [MinerU](https://mineru.net/) 云端 API 的长文档 OCR 编排项目，以 Python CLI、MCP Server 和可复用 Agent Skill 三种形式提供能力。
+面向 [MinerU](https://mineru.net/) 云端 API 的长文档 OCR 编排项目，以 Python CLI 和可复用 Agent Skill 提供能力。
 
 MinerU OCR 主要解决单次 API 请求难以稳定处理的本地长 PDF：自动规划页码范围、上传并跟踪每个分段、恢复局部失败、下载 MinerU 结果压缩包，并按照原始页序合并 Markdown 与引用资源。
 
-> 本项目会将指定文档上传至 MinerU Cloud。必须完全离线保存的数据不应使用本项目处理。
+> `process`、`submit` 会将文档上传至 MinerU Cloud；可选的 `enhance` 会将文档文本和引用图片发送至配置的 Doubao 服务。`publish`、`validate` 仅在本地运行，无需服务凭据。
+
+## 0.2.0 更新特征
+
+本版本将 OCR 结果组织为可溯源的多模态知识素材：原始 Markdown、资产与来源 manifest，以及可选的 AI 派生 JSONL。
+
+- **发布与校验落地**：新增 `publish`、`validate` 和 `process --output-dir`，完成资源检查、引用重写与最终交付。共享资产按内容哈希存储，文档自动避让同名文件，保留原文档和结果包。
+- **稳定标识与来源证据**：manifest 包含 `doc_id`、`asset_id`、源版本、文件哈希和每次资源引用的位置。兼容的 Content List V1 可映射原 PDF 页码和 bbox；定位不足时明确记录范围或未知，上游布局 JSON 保留在 `evidence/`。
+- **结构化视觉理解**：可选 AI JSONL 区分图中观察和上下文推断，补充机械尺寸、流程关系、图表内容等字段；尺寸、单位、公差字符串不做换算。记录生成信息、逐图失败、不支持的格式及复核状态，并保留原生 SVG 资产。
+- **内容保真与引用修复**：修复空表格单元格错列、独立数值丢失、HTML 图片关联缺失和来源范围错配。支持完整、折叠、简写及重复引用；不同分段的同名标签分别处理，避免图片串段。增强仅处理当前文档实际引用的图片。
+- **长文与重试可靠性**：超长单行继续拆分，避免静默截断；模型输入片段上限为 40,000 字符，检索文本块上限为 8,000 字符。保留多点号文件名，重新增强时只原子替换对应 JSONL；下载完成后的合并失败也可恢复。
+- **统一 CLI 与 Skill**：以 `mineru-ocr` 为维护入口，更新 Agent Skill 和[知识素材契约](.agents/skills/mineru-ocr/references/knowledge-materials.md)。最低 Python 版本调整为 3.11，移除旧 `mineru-ocr-mcp` 入口及 MCP 依赖。
+
+建议先发布，再增强最终 Markdown，使 JSONL 引用与交付路径一致。AI 的 `ok` 状态仅表示结构校验通过，仍需复核，不能视为已验证的技术结论。
 
 ## 项目背景
 
@@ -29,7 +42,7 @@ MinerU 能够高质量解析 PDF、扫描页、表格、公式、图片及常见
 - **有序合并**：按照原始页序合并结果，并写入不可见的来源页码标记。
 - **资源链接重写**：安全解压结果 ZIP，复制资源并重写 Markdown/HTML 相对引用。
 - **小型 Office 文档**：直接提交 DOC/DOCX、PPT/PPTX、XLS/XLSX。
-- **CLI 与 MCP**：既可用于终端脚本，也可作为 Agent 的结构化工具。
+- **CLI 接口**：既可用于终端脚本，也可通过 Agent Skill 工作流调用。
 - **用户级凭据**：支持 `MINERU_API_TOKEN` 或本地明文用户配置，不将 Token 提交到仓库。
 
 ## 如何选择 MinerU 工具
@@ -43,7 +56,7 @@ MinerU 能够高质量解析 PDF、扫描页、表格、公式、图片及常见
 ## 架构
 
 ```text
-Agent Skill / MCP 工具 / CLI
+Agent Skill / CLI
               │
               ▼
       本地规划与任务存储
@@ -66,11 +79,11 @@ Agent Skill / MCP 工具 / CLI
 
 ## 环境要求
 
-- Python 3.10 或更高版本
+- Python 3.11 或更高版本（本机使用现有 Python 3.12）
 - 从 [MinerU API 管理页面](https://mineru.net/apiManage/docs)获取的 Token
 - 能够访问 MinerU及其签名上传、下载地址的网络环境
 
-安装时会自动引入 `httpx`、`pydantic`、`pypdf`、`platformdirs` 和 Python MCP SDK。
+安装时会自动引入 `httpx`、`pydantic`、`pypdf` 和 `platformdirs`。
 
 ## 安装
 
@@ -180,39 +193,6 @@ mineru-ocr config clear-token
 
 `show` 只显示配置路径和生效来源，不会输出 Token。
 
-## MCP Server
-
-MCP Server 提供五个工具：
-
-- `ocr_process`
-- `ocr_submit`
-- `ocr_status`
-- `ocr_resume`
-- `ocr_clean`
-
-使用 stdio 启动：
-
-```bash
-mineru-ocr-mcp
-```
-
-Codex 的 `~/.codex/config.toml` 配置示例：
-
-```toml
-[mcp_servers.mineru_ocr]
-command = "mineru-ocr-mcp"
-args = ["--transport", "stdio"]
-tool_timeout_sec = 1900
-```
-
-也可启动仅监听本机的 Streamable HTTP 服务：
-
-```bash
-mineru-ocr-mcp --transport streamable-http --port 8182
-```
-
-默认绑定 `127.0.0.1`。
-
 ## 处理规则
 
 ### PDF 不超过200MB
@@ -246,14 +226,27 @@ document.pdf.mineru/
 └── manifest.json
 ```
 
-Agent Skill 还规定了向用户指定共享目录发布结果的后处理策略：
+`publish` 命令已实现向用户指定共享目录发布结果；`process --output-dir` 会自动调用它：
 
 - 最终以 `<源文件基名>.md` 直接发布到所选目录；
 - 使用 `<源文件基名> (1).md` 等名称避让冲突，绝不覆盖；
 - 资源统一整理到共享 `assets/` 并重写引用；
-- 可选发布 `<源文件基名>.manifest.json`；
-- 验证最终 Markdown 和资源后再删除临时 `.mineru` 结果包；
+- 同步发布 `<源文件基名>.manifest.json`，包含稳定文档/资产 ID、资源哈希和来源定位；
+- 按内容哈希整理共享资源，保留上游布局 JSON 到 `evidence/`；
+- 验证最终 Markdown 和资源，保留原 `.mineru` 结果包；
 - 永不删除或修改原始源文档。
+
+```bash
+# 基础材料：正文、表格、图片引用、来源清单
+mineru-ocr process report.pdf --output-dir knowledge
+# 进阶材料：在发布后的文件旁生成视觉理解 JSONL
+mineru-ocr process report.pdf --output-dir knowledge --enhance
+# 对已有结果进行纯本地发布与校验
+mineru-ocr publish report.pdf.mineru --output-dir knowledge
+mineru-ocr validate knowledge/report.md
+```
+
+`publish` 不迁移旧 AI JSONL。需要增强时，对发布后的 Markdown 执行 `enhance`；原结果包及其旧增强仍保留。已有文件名自动避让；重新增强只原子更新对应的 `.ai.jsonl`。详细身份、定位、视觉解释与检索约定见 [知识素材契约](.agents/skills/mineru-ocr/references/knowledge-materials.md)。
 
 ## AI 增强输出
 
@@ -265,13 +258,17 @@ MinerU 完成 Markdown 提取后，可选的 AI 增强层会生成一个适合�
 
 **为什么要做 AI 增强？** MinerU 输出的 Markdown 保留了文档的视觉布局、表格和图片，适合人阅读。但 AI 智能体消费这些输出时，如果能直接获取结构化元数据——每张图表描述什么、每个章节出现哪些实体、章节之间如何关联——就不用重新通读整份文档。
 
-**单一模型策略。** 图片理解需要用多模态模型，文本分析也需要 LLM。增强层选择**一个模型**——Doubao-Seed-2.0-lite（火山引擎 Coding Plan）——同时承担两项任务。这样做简化了配置（用户只需一个 API Key），减少了 API 依赖数量，同时确保模型在提取跨章节关系时有完整的文档上下文。
+**单一模型策略。** 增强层默认由配置的 Doubao 模型承担图片和文本分析。文本按长度分片，每次调用只看到该片段；不保证一次获得全文上下文，也不保证发现跨片段关系。
 
 **非破坏性输出。** 原始 Markdown 始终保持不变。AI 输出只写入同级 `<source>.ai.jsonl` 文件。如果原始 Markdown 已经生成，可直接运行 `mineru-ocr enhance <markdown-or-result-dir>`，不会重复 OCR。
 
 **分片文本分析。** 长文档不再静默截断，而是按章节感知的方式分片分析。覆盖范围元数据会写入 JSONL 的第一条 metadata 记录。
 
 **逐图错误容忍。** 单张图片损坏或无法识别不会影响其余图片和全文分析。每张图片独立处理，错误仅记录在该图片的 JSON 条目中。
+
+**视觉证据与解释分开。** 可见文字、尺寸/单位/公差原样存储；上下文推断单独记录。每条派生记录带模型、提示词版本、源版本、资产 ID 和未复核状态。SVG 等原生资产保留引用，当前视觉接口不支持时标记 `unsupported`，不伪装成 JPEG。
+
+**定位精度明确。** 兼容的 Content List V1 可提供准确源页码及归一化 bbox；只有分段范围时保留 `page_range`，缺失时标记 `unknown`。原生矢量重建、任意新版布局协议的精准映射不在此版本范围内。
 
 **凭据隔离。** Doubao API Key 只通过 `mineru-ocr config set-doubao-key` 保存到本机用户配置。它不会写入仓库文件、生成的 Markdown、manifest、示例或回复。
 
@@ -357,7 +354,7 @@ mineru-ocr config set-doubao-key
 python -m pytest --basetemp .test-tmp -p no:cacheprovider
 ```
 
-覆盖场景包括：
+0.2.0 已在 Python 3.12.2 下通过 68 项离线测试，覆盖场景包括：
 
 - 199/200/201/400页边界规划；
 - 相同完整文件使用不同页码范围重复上传；
@@ -366,11 +363,16 @@ python -m pytest --basetemp .test-tmp -p no:cacheprovider
 - Markdown 合并顺序和资源重名隔离；
 - ZIP 路径穿越保护；
 - API 请求结构；
-- Token 优先级及清理。
+- Token 优先级及清理；
+- 本地发布、文件名冲突、资源缺失、哈希校验及复制失败重试；
+- 稳定 ID、源页码映射、重复引用及跨分段标签隔离；
+- 表格与数值保真、文本块长度限制、当前文档图片筛选和发布后增强。
 
 受限 Windows 环境中应保留显式 `--basetemp`，因为默认用户临时目录可能不可访问。
 
 ## 实际文档验证
+
+0.2.0 另使用一份已有的 1,545,149 字节中文 Markdown 完成本地验收，发布后的 17 个资源引用有效。替身 AI 响应跑通增强流程，生成 251 条 JSONL 记录和 18 个模型输入片段，ID 唯一；发布仅改变资源目标路径，增强不改写发布 Markdown。该验收证明本地流程正确，不代表真实云端 OCR 或视觉模型准确率。
 
 本流程已使用一份364页中文技术标准进行验证，按 `1-200`、`201-364` 两个逻辑范围成功完成，并生成包含156个标题、327个 HTML 表格和12个图片引用的有序合并文档。与官方 CLI 输出比较时，可见文字相似度约为99.35%；对于一个异常膨胀的表格章节，自定义合并结果的标签结构明显更紧凑。
 
@@ -378,7 +380,7 @@ python -m pytest --basetemp .test-tmp -p no:cacheprovider
 
 ```text
 .agents/skills/mineru-ocr/   Agent Skill 与 MinerU API 参考
-src/mineru_ocr/              CLI、MCP、API客户端、规划、存储与合并逻辑
+src/mineru_ocr/              CLI、API客户端、规划、存储与合并逻辑
 tests/                       离线单元测试
 pyproject.toml               包元数据、依赖和命令入口
 ```
@@ -405,4 +407,3 @@ pyproject.toml               包元数据、依赖和命令入口
 - [MinerU API 文档](https://mineru.net/apiManage/docs)
 - [MinerU 开源仓库](https://github.com/opendatalab/MinerU)
 - [MinerU Ecosystem 与官方 CLI](https://github.com/opendatalab/MinerU-Ecosystem)
-- [Model Context Protocol](https://modelcontextprotocol.io/)

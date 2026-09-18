@@ -13,3 +13,6 @@ test-inputs/
 # Local workspace artifacts (not for upstream)
 CLAUDE.md
 PROJECT_STATUS.md
+/_agent/
+/inbox/
+/.official-skill-test/

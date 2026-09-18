@@ -68,3 +68,10 @@ def test_doubao_image_prompt_includes_document_context(tmp_path, monkeypatch):
     assert "图 A.0.2 爆炸危险区域等级和范围划分图" in captured["prompt"]
     assert "必须优先使用图题" in captured["prompt"]
     client.close()
+
+
+def test_direct_text_call_rejects_truncation_instead_of_silently_losing_tail():
+    client = object.__new__(DoubaoClient)
+    client._chat = lambda messages: '{"ok": true}'
+    with pytest.raises(DoubaoError, match="segment|limit"):
+        client.analyze_text("x" * 90_000)
