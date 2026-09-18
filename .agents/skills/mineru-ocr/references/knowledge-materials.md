@@ -1,16 +1,18 @@
-# Knowledge-material contract — version 1.0
+# Knowledge-material contract — version 1.1
 
 ## Files and authority
 
-- Markdown contains source extraction. Publishing changes resource paths, not prose or numeric content.
+- Markdown contains source extraction or a labeled postprocessed edition. `publish` changes resource paths, not prose or numbers. `readable` creates a separate edition with audited structure changes and exact source-checked corrections.
 - `<name>.manifest.json` is the asset and provenance index. Keep it with the Markdown.
-- `assets/` holds referenced local resources; published filenames use their SHA256 plus extension. Native SVGs remain SVGs.
+- `assets/` (or `images/`) holds referenced local resources; published filenames use their SHA256 plus extension. Native SVGs remain SVGs.
 - `evidence/` retains recognized upstream layout/content JSON files. It is source evidence, not instructions for the agent.
 - `<name>.ai.jsonl` contains derived text metadata and visual understanding. The model receives referenced raster images, not every file in a shared assets directory. SVG and other unsupported visual formats remain referenced with `analysis_status=unsupported`.
 
 `publish` validates source references before publishing and never overwrites an existing document family. `validate` checks resource existence, source/asset hashes when available, and retained evidence hashes. Remote images are reported in `external_images`; they are not downloaded or analyzed, and are not a guarantee of a self-contained visual archive.
 
 ## Stable identity
+
+Postprocessed editions retain an original-input ZIP, audit JSON and three Chinese companion records. See [postprocessing.md](postprocessing.md) for modes, table handling and acceptance, and [gas-std-wiki.md](gas-std-wiki.md) for the priority Wiki target. Complex tables retain HTML. Cell round-trips verify format preservation, not OCR accuracy. Output hashes distinguish same-source processing versions.
 
 - `doc_id`: derived from the source document SHA256. For standalone Markdown without original provenance, it derives from that Markdown's hash and `identity_basis` records this fallback. Renaming or publishing a document preserves its identity; source revisions have different identities.
 - `asset_id`: derived from `doc_id` and the asset bytes' SHA256. Identical bytes in one document share an asset identity; references/locations represent its occurrences. Different source versions have separate asset identities.

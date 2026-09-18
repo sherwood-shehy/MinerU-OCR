@@ -1,0 +1,153 @@
+{
+  "source_sha256": "e7cc0ab9449e8908b147629a36ede31bca1d972ce1ecc1e2f47472c564bf39c4",
+  "replacements": [
+    {
+      "before": "## 冷凝水 condensate",
+      "after": "## 3.36 冷凝水 condensate",
+      "page": 11,
+      "count": 1,
+      "reason": "对照 PDF 第11页：3.36 被错误归类为 header，补回条目编号。"
+    },
+    {
+      "before": "\n\n(资料性附录)\n\n热水器燃烧烟气中氮氧化物含量",
+      "after": "\n\n## 附录 E\n\n(资料性附录)\n\n热水器燃烧烟气中氮氧化物含量",
+      "page": 99,
+      "count": 1,
+      "reason": "对照 PDF 第99页：附录 E 被错误归类为 header，补回附录标题。"
+    },
+    {
+      "before": "\n\nC.9.1 热水器的泄漏电流不应过大",
+      "after": "\n\n## C.9 泄漏电流和电气强度\n\nC.9.1 热水器的泄漏电流不应过大",
+      "page": 89,
+      "count": 1,
+      "reason": "对照 PDF 第89页：C.9 标题被错误归类为 header，补回标题。"
+    },
+    {
+      "before": "![](assets/part-0001/images/e7c6d9a75466808d0bf80f5d850e83f4afcedc80520de7a1fcc94ee1da45b7d0.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/e7c6d9a75466808d0bf80f5d850e83f4afcedc80520de7a1fcc94ee1da45b7d0.jpg)",
+      "page": 20,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/4cb6179f5e219509651891b486a8a0399d5ea8bad86b9a1b202ea5d9c9f148f3.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/4cb6179f5e219509651891b486a8a0399d5ea8bad86b9a1b202ea5d9c9f148f3.jpg)",
+      "page": 30,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/bb545eb757ae2573d3b451f96755cb2a82152fe514252c2b71434e55b3d6e6bc.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/bb545eb757ae2573d3b451f96755cb2a82152fe514252c2b71434e55b3d6e6bc.jpg)",
+      "page": 38,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/7c6844ff95f98a8fc4d36e37a0ec67e2d9c75a06743a4153d38ece4f9fda29f0.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/7c6844ff95f98a8fc4d36e37a0ec67e2d9c75a06743a4153d38ece4f9fda29f0.jpg)",
+      "page": 42,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/878f98438d6cef72c322878c1787ba448785fd03cb27ee569162d8b01498beab.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/878f98438d6cef72c322878c1787ba448785fd03cb27ee569162d8b01498beab.jpg)",
+      "page": 46,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/8b279a022087f3d441adee33e517d9c0021d839138beee962ace0f9e868ff9ba.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/8b279a022087f3d441adee33e517d9c0021d839138beee962ace0f9e868ff9ba.jpg)",
+      "page": 50,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/29583cd886eb77823b850f61bfaed2675b67e80e69182f01ada7650eabad1528.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/29583cd886eb77823b850f61bfaed2675b67e80e69182f01ada7650eabad1528.jpg)",
+      "page": 56,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "$$\np _ {\\mathrm{s}} = p _ {\\mathrm{m}} \\left[ \\frac {3 0}{T - T _ {\\mathrm{A}}} \\right] ^ {1. 2 5}\\tag{……( B.1}\n$$",
+      "after": "$$\np _ {\\mathrm{s}} = p _ {\\mathrm{m}} \\left[ \\frac {3 0}{T - T _ {\\mathrm{A}}} \\right] ^ {1. 2 5}\\tag{B.1}\n$$",
+      "page": 81,
+      "count": 1,
+      "reason": "对照 PDF 第81页：清除公式编号的点引导线，保留编号 B.1，不改公式运算项。"
+    },
+    {
+      "before": "$$\n(+ 0. 8 \\Phi_ {3} t _ {3} - p _ {\\mathrm{s1}} (t _ {3 -} t _ {\\mathrm{F}}) - p _ {\\mathrm{s2}} t _ {\\mathrm{F}})\n$$",
+      "after": "$$\n(+ 0. 8 \\Phi_ {3} t _ {3} - p _ {\\mathrm{s1}} (t _ {3} - t _ {\\mathrm{F}}) - p _ {\\mathrm{s2}} t _ {\\mathrm{F}})\n$$",
+      "page": 81,
+      "count": 1,
+      "reason": "对照 PDF 第81页：括号内为 t_3 - t_F；OCR 将减号错误并入下标。"
+    },
+    {
+      "before": "$$\n\\varphi \\left[ \\mathrm{NO} _ {x (\\alpha = 1)} \\right] = \\frac {1 3 . 3 3 - 1 . 5 2}{1 3 . 3 3 - x} \\times \\frac {\\varphi (\\mathrm{NO} _ {x} ^ {\\prime}) - \\varphi (\\mathrm{NO} _ {x} ^ {\\prime \\prime})}{\\varphi (\\mathrm{CO} _ {2 \\mathrm{a}}) - \\varphi (\\mathrm{CO} _ {2 \\mathrm{b}})} \\times \\alpha\\tag{……(E.1}\n$$",
+      "after": "$$\n\\varphi \\left[ \\mathrm{NO} _ {x (\\alpha = 1)} \\right] = \\frac {1 3 . 3 3 - 1 . 5 2}{1 3 . 3 3 - x} \\times \\frac {\\varphi (\\mathrm{NO} _ {x} ^ {\\prime}) - \\varphi (\\mathrm{NO} _ {x} ^ {\\prime \\prime})}{\\varphi (\\mathrm{CO} _ {2 \\mathrm{a}}) - \\varphi (\\mathrm{CO} _ {2 \\mathrm{b}})} \\times \\alpha\\tag{E.1}\n$$",
+      "page": 99,
+      "count": 1,
+      "reason": "对照 PDF 第99页：清除公式编号的点引导线，保留编号 E.1，不改公式运算项。"
+    },
+    {
+      "before": "给排气口的最小面积/cm2",
+      "after": "给排气口的最小面积/cm²",
+      "page": 102,
+      "count": 1,
+      "reason": "Agent对照PDF第102页表F.1，面积单位为平方厘米；恢复单位上标，不改动数值。"
+    }
+  ],
+  "table_headers": [
+    {
+      "input_sha256": "73fd09c143218a65f66308775d02b7137c782f16a852b0d50ea7dfcec3d4fa94",
+      "header_row": 0,
+      "page": 14,
+      "reason": "Agent对照PDF第14页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "c05c9418c84cd9707f5e8aa8d8e3720cc5dcf09b88cdc96148c5464c3be356b5",
+      "header_row": 0,
+      "page": 15,
+      "reason": "Agent对照PDF第15页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "c88b6bc259681b0836f132e8fa4e644d697a30b4b4fc4cc36092e12bb0d5deea",
+      "header_row": 0,
+      "page": 29,
+      "reason": "Agent对照PDF第29页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "cdd107c56e6d5a9a601577ab06b700f2066544e13a17a8aaf1275d3b228b3834",
+      "header_row": 0,
+      "page": 39,
+      "reason": "Agent对照PDF第39页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "9184523db85b2411a3ec5b51be92c224c2a3ca6eaf36a8e10f5df3e5d1b4cba6",
+      "header_row": 0,
+      "page": 96,
+      "reason": "Agent对照PDF第96页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "a3b1dc6f48f25275d1a5f903c87507aa2f995b6913aa5977311ccbb44d35b207",
+      "header_row": 0,
+      "page": 99,
+      "reason": "Agent对照PDF第99页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "7e226169944ff82d8be4c564f4e291751852756b178d67e819606ad432f94d90",
+      "header_row": 0,
+      "page": 102,
+      "reason": "Agent对照PDF第102页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    },
+    {
+      "input_sha256": "3d0b7e802e6bd3aba059867d3dbe40ee5f20fbbbb1efbb41fddd26badd8eb32a",
+      "header_row": 0,
+      "page": 102,
+      "reason": "Agent对照PDF第102页表格原图，确认首行为单层表头；只确认表头角色，未宣称全文或全表数值人工验收。"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
 interface:
   display_name: "MinerU OCR"
-  short_description: "Publish cited PDF knowledge assets with optional visual AI"
-  default_prompt: "Use $mineru-ocr to convert this document into Markdown with validated assets and source references, adding visual understanding when requested."
+  short_description: "Prepare readable and Wiki-ready OCR sources with audit records"
+  default_prompt: "Use $mineru-ocr to prepare this document as readable or Wiki source Markdown, with conservative table conversion, validated images and source-page references, recording corrections and unresolved issues. Add visual AI only when requested."

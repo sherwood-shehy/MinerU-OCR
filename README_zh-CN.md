@@ -6,9 +6,22 @@
 
 MinerU OCR 主要解决单次 API 请求难以稳定处理的本地长 PDF：自动规划页码范围、上传并跟踪每个分段、恢复局部失败、下载 MinerU 结果压缩包，并按照原始页序合并 Markdown 与引用资源。
 
-> `process`、`submit` 会将文档上传至 MinerU Cloud；可选的 `enhance` 会将文档文本和引用图片发送至配置的 Doubao 服务。`publish`、`validate` 仅在本地运行，无需服务凭据。
+> `process`、`submit` 会将文档上传至 MinerU Cloud；可选的 `enhance` 会将文档文本和引用图片发送至配置的 Doubao 服务。`publish`、`readable`、`validate` 仅在本地运行，无需服务凭据。
 
-## 0.2.0 更新特征
+0.3.0 将 MinerU 提取能力与可追溯的离线后处理结合，兼顾人类阅读和 LLM Wiki 源材料准备。详见[使用方法](#面向阅读和-wiki-源材料的离线后处理)及 [OCR 与后处理流程](docs/readable-workflow.md)。
+
+## 0.3.0 更新特征
+
+- **阅读版与源材料版**：`readable` 默认生成带导航和折叠原页的阅读版；`--profile gas-std-wiki` 默认生成源材料版，将正文与校勘记录分别交付。直接复用已有 OCR 结果，本地执行。
+- **选择性 Markdown 表格**：`--table-format auto` 只转换已明确或经原页核对表头的简单矩形表；逐格检查空单元格、数值、单位和内联公式。合并单元格、多层表头等复杂表保留 HTML；`html` 模式保留全部 HTML 表格。
+- **保守清理与精确校勘**：重复页眉清理需要页边位置证据，结构整理保持正文非空白字符；文字替换记录 before/after、次数、PDF 页码及原因，不匹配则停止。整理标题时保护表格、独立公式及代码块。
+- **条款与图片溯源**：识别到的正文、附录、条文说明采用独立锚点空间，避免同号条款混淆；图片可从匹配的原 PDF 重新裁取，保留原图关系与原页链接。未知定位明确保留，数字图例不再误触发条款分区。
+- **完整交付与验证**：正文及 manifest 配套中文来源说明、定位与图片清单、校勘与缺口记录。图片位于 `images/`，原始输入快照 ZIP 和审计 JSON 位于 `evidence/`；验证报告哈希、资源链接和生成锚点，发布时避让整个同名文件组。
+- **Wiki 前置流程纳入 Skill**：更新 skill 的处理、原页复核及验收指引，读取并记录目标库当前规则。正式来源登记、知识提炼与人工验收按目标 Wiki 的摄入规则办理，AI 增强保持可选。
+
+复用 GB 6932—2015 的 108 页扫描件实测：**56 张表中 8 张转为 Markdown、48 张保留 HTML，14 项有记录校勘**；全部表格及 6 个独立公式块均有原页链接。**92 项离线测试通过**，8 张转换表另经独立 GFM 渲染检查，行列与单元格文字一致。这些结果验证处理保真，不代表全文 OCR 准确率或人工验收。
+
+## 历史版本：0.2.0
 
 本版本将 OCR 结果组织为可溯源的多模态知识素材：原始 Markdown、资产与来源 manifest，以及可选的 AI 派生 JSONL。
 
@@ -41,6 +54,7 @@ MinerU 能够高质量解析 PDF、扫描页、表格、公式、图片及常见
 - **可恢复任务**：在本地持久化复合任务状态，仅重试失败分段。
 - **有序合并**：按照原始页序合并结果，并写入不可见的来源页码标记。
 - **资源链接重写**：安全解压结果 ZIP，复制资源并重写 Markdown/HTML 相对引用。
+- **离线后处理**：生成阅读版或 Wiki 源材料版，选择性转换表格，保留原始快照及复核记录。
 - **小型 Office 文档**：直接提交 DOC/DOCX、PPT/PPTX、XLS/XLSX。
 - **CLI 接口**：既可用于终端脚本，也可通过 Agent Skill 工作流调用。
 - **用户级凭据**：支持 `MINERU_API_TOKEN` 或本地明文用户配置，不将 Token 提交到仓库。
@@ -75,15 +89,21 @@ Agent Skill / CLI
     ├─ 有序 Markdown
     ├─ 重写后的资源
     └─ 来源清单
+              │
+              ▼
+        可选离线后处理
+    ├─ 阅读版或 Wiki 源材料版
+    ├─ 选择性表格转换与原页图提取
+    └─ 原始快照、定位与校勘记录
 ```
 
 ## 环境要求
 
 - Python 3.11 或更高版本（本机使用现有 Python 3.12）
-- 从 [MinerU API 管理页面](https://mineru.net/apiManage/docs)获取的 Token
-- 能够访问 MinerU及其签名上传、下载地址的网络环境
+- 云端提取需要从 [MinerU API 管理页面](https://mineru.net/apiManage/docs)获取 Token，并能访问相关网络端点
+- 离线 `readable` 需要可选依赖 PyMuPDF、匹配的原始 PDF 和保留的已适配 Content List 证据
 
-安装时会自动引入 `httpx`、`pydantic`、`pypdf` 和 `platformdirs`。
+安装时会自动引入 `httpx`、`pydantic`、`pypdf`、`platformdirs` 和 `python-dotenv`。
 
 ## 安装
 
@@ -99,6 +119,14 @@ python -m pip install -e .
 
 ```bash
 python -m pip install -e ".[test]"
+```
+
+需要离线后处理时安装可选依赖：
+
+```bash
+python -m pip install -e ".[readable]"
+# 运行包含 PDF 后处理在内的完整测试：
+python -m pip install -e ".[test,readable]"
 ```
 
 ### 2. 配置 MinerU Token
@@ -193,6 +221,32 @@ mineru-ocr config clear-token
 
 `show` 只显示配置路径和生效来源，不会输出 Token。
 
+### 面向阅读和 Wiki 源材料的离线后处理
+
+输入为完成的 `.mineru` 结果目录，或带 manifest 的已发布 Markdown。原始 PDF 的哈希及物理页数必须与来源记录匹配。以下命令无需 Token，也不会重新 OCR。
+
+```bash
+# 通用阅读版：导航、逐页原图，表格保留 HTML
+mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/reading --name report-reading
+
+# 通用 Wiki 源材料版：正文与核对记录分开，选择性转换表格
+mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/wiki --name report-source --edition source --table-format auto
+
+# 使用 gas-std-wiki 默认配置，记录目标规则及精确校勘
+mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/gas-wiki --name report-source --profile gas-std-wiki --target-project /path/to/gas-std-wiki --source-id GB-EXAMPLE --review-file review.json
+
+mineru-ocr validate outputs/gas-wiki/report-source.md
+```
+
+最后一种示例用于已有匹配目标库和复核文件的情况。`--target-project` 读取九个当前规则文件并记录指纹，不写入该项目。没有原页校勘或表头确认时可省略 `--review-file`。显式指定的 `--edition`、`--table-format` 覆盖配置默认值。
+
+| 配置 | 默认版式 | 默认表格方式 |
+|---|---|---|
+| `generic` | `reading` | `html` |
+| `gas-std-wiki` | `source` | `auto` |
+
+简单二维表适合 Markdown；GFM 无法表达合并单元格及多层表头，复杂表保留 HTML。MinerU 仅使用 `<td>` 时不默认首行就是表头，需对照原页确认。详细条件见[表格与校勘约定](.agents/skills/mineru-ocr/references/postprocessing.md)，实例见 [GB 6932 校勘配置](docs/examples/gb6932-2015-wiki-review.json)。校勘记录绑定特定源文件哈希，不能直接套到其他 PDF。
+
 ## 处理规则
 
 ### PDF 不超过200MB
@@ -247,6 +301,20 @@ mineru-ocr validate knowledge/report.md
 ```
 
 `publish` 不迁移旧 AI JSONL。需要增强时，对发布后的 Markdown 执行 `enhance`；原结果包及其旧增强仍保留。已有文件名自动避让；重新增强只原子更新对应的 `.ai.jsonl`。详细身份、定位、视觉解释与检索约定见 [知识素材契约](.agents/skills/mineru-ocr/references/knowledge-materials.md)。
+
+`readable` 输出完整的本地交付文件组：
+
+```text
+report-source.md
+report-source.manifest.json
+report-source.来源说明.md
+report-source.定位与图片清单.md
+report-source.校勘与缺口.md
+images/
+evidence/
+```
+
+三个配套文件分别记录来源及待补元数据、绑定版本的条款和图片定位、精确修改与表格处理决定及缺口。证据 ZIP 保留原 PDF、OCR Markdown、manifest、引用资源的原始字节，另附处理审计 JSON。迁移时保留整个文件组及其引用资源。普通发布也可通过 `publish --image-dir images` 选择图片目录。
 
 ## AI 增强输出
 
@@ -354,6 +422,8 @@ mineru-ocr config set-doubao-key
 python -m pytest --basetemp .test-tmp -p no:cacheprovider
 ```
 
+0.3.0 已通过 92 项离线测试，新增选择性表格转换、源文件绑定校勘、条款分区、原始输入快照、交付记录及锚点验证。108 页 GB 6932 样本保留全部 56 张表，其中 8 张 Markdown 表另通过独立 GFM 渲染后的逐单元格检查。
+
 0.2.0 已在 Python 3.12.2 下通过 68 项离线测试，覆盖场景包括：
 
 - 199/200/201/400页边界规划；
@@ -371,6 +441,10 @@ python -m pytest --basetemp .test-tmp -p no:cacheprovider
 受限 Windows 环境中应保留显式 `--basetemp`，因为默认用户临时目录可能不可访问。
 
 ## 实际文档验证
+
+0.3.0 使用已有 GB 6932—2015 的 108 页 OCR 结果完成离线源材料交付：保留全部 56 张表（8 张 Markdown、48 张 HTML），包含 42 张由原 PDF 提取的裁图、89 张被正文引用的原页图及 497 个章节、附录和条款定位。56 张表和 6 个独立公式块均有原页链接。原始 ZIP 完整性、输入字节哈希及最终资源、配套文件和锚点验证通过；另经独立 Marked GFM 渲染，8 张转换表的行列和单元格文字全部一致。
+
+样本记录了 14 项校勘；7.3.3、7.7.5 两处条款的 PDF 页码未可靠匹配，保留待核实。其余页面仍在原始 PDF 快照中。全文 OCR 完整性、逐格数值、图示技术含义、粗体原版含义、标准当前效力和人工验收尚未全面核对。本次验证源材料准备，没有自动摄入目标 Wiki。
 
 0.2.0 另使用一份已有的 1,545,149 字节中文 Markdown 完成本地验收，发布后的 17 个资源引用有效。替身 AI 响应跑通增强流程，生成 251 条 JSONL 记录和 18 个模型输入片段，ID 唯一；发布仅改变资源目标路径，增强不改写发布 Markdown。该验收证明本地流程正确，不代表真实云端 OCR 或视觉模型准确率。
 
@@ -392,6 +466,8 @@ pyproject.toml               包元数据、依赖和命令入口
 - 大型 Office 文档不会自动拆分。
 - 如果单个 PDF 页面仍超过安全上传阈值，则无法继续物理拆分。
 - 不尝试在不同 OCR 分段之间进行语义修复，例如自动重建恰好跨越分段边界的表格。
+- 离线后处理依赖匹配的 PDF 与已适配的旧版 Content List 证据；不支持或有歧义的定位保留未知，不推断旋转页面的裁图坐标。
+- 混合 HTML/Markdown 表格和公式需要相应阅读器支持；格式保真、图片可解码和链接有效不等于 OCR 准确或人工复核通过。
 
 ## 参与贡献
 

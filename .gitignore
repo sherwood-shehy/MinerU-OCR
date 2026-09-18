@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .test-tmp/
+.test-tmp-*/
 pytest-cache-files-*/
 .env
 *.mineru.tmp-*/
@@ -16,3 +17,11 @@ PROJECT_STATUS.md
 /_agent/
 /inbox/
 /.official-skill-test/
+
+# Local conversion deliveries and temporary Python workspaces
+/GB *.md
+/*.manifest.json
+/*.ai.jsonl
+/images/
+/evidence/
+/tmp????????/

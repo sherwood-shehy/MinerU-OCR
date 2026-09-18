@@ -1,0 +1,96 @@
+{
+  "source_sha256": "e7cc0ab9449e8908b147629a36ede31bca1d972ce1ecc1e2f47472c564bf39c4",
+  "replacements": [
+    {
+      "before": "## 冷凝水 condensate",
+      "after": "## 3.36 冷凝水 condensate",
+      "page": 11,
+      "count": 1,
+      "reason": "对照 PDF 第11页：3.36 被错误归类为 header，补回条目编号。"
+    },
+    {
+      "before": "\n\n(资料性附录)\n\n热水器燃烧烟气中氮氧化物含量",
+      "after": "\n\n## 附录 E\n\n(资料性附录)\n\n热水器燃烧烟气中氮氧化物含量",
+      "page": 99,
+      "count": 1,
+      "reason": "对照 PDF 第99页：附录 E 被错误归类为 header，补回附录标题。"
+    },
+    {
+      "before": "\n\nC.9.1 热水器的泄漏电流不应过大",
+      "after": "\n\n## C.9 泄漏电流和电气强度\n\nC.9.1 热水器的泄漏电流不应过大",
+      "page": 89,
+      "count": 1,
+      "reason": "对照 PDF 第89页：C.9 标题被错误归类为 header，补回标题。"
+    },
+    {
+      "before": "![](assets/part-0001/images/e7c6d9a75466808d0bf80f5d850e83f4afcedc80520de7a1fcc94ee1da45b7d0.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/e7c6d9a75466808d0bf80f5d850e83f4afcedc80520de7a1fcc94ee1da45b7d0.jpg)",
+      "page": 20,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/4cb6179f5e219509651891b486a8a0399d5ea8bad86b9a1b202ea5d9c9f148f3.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/4cb6179f5e219509651891b486a8a0399d5ea8bad86b9a1b202ea5d9c9f148f3.jpg)",
+      "page": 30,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/bb545eb757ae2573d3b451f96755cb2a82152fe514252c2b71434e55b3d6e6bc.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/bb545eb757ae2573d3b451f96755cb2a82152fe514252c2b71434e55b3d6e6bc.jpg)",
+      "page": 38,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/7c6844ff95f98a8fc4d36e37a0ec67e2d9c75a06743a4153d38ece4f9fda29f0.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/7c6844ff95f98a8fc4d36e37a0ec67e2d9c75a06743a4153d38ece4f9fda29f0.jpg)",
+      "page": 42,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/878f98438d6cef72c322878c1787ba448785fd03cb27ee569162d8b01498beab.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/878f98438d6cef72c322878c1787ba448785fd03cb27ee569162d8b01498beab.jpg)",
+      "page": 46,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/8b279a022087f3d441adee33e517d9c0021d839138beee962ace0f9e868ff9ba.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/8b279a022087f3d441adee33e517d9c0021d839138beee962ace0f9e868ff9ba.jpg)",
+      "page": 50,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "![](assets/part-0001/images/29583cd886eb77823b850f61bfaed2675b67e80e69182f01ada7650eabad1528.jpg)",
+      "after": "单位为毫米\n\n![](assets/part-0001/images/29583cd886eb77823b850f61bfaed2675b67e80e69182f01ada7650eabad1528.jpg)",
+      "page": 56,
+      "count": 1,
+      "reason": "核对原页右上角单位标注：MinerU 将单位为毫米误归类为 header，补在该页首个图像之前。"
+    },
+    {
+      "before": "$$\np _ {\\mathrm{s}} = p _ {\\mathrm{m}} \\left[ \\frac {3 0}{T - T _ {\\mathrm{A}}} \\right] ^ {1. 2 5}\\tag{……( B.1}\n$$",
+      "after": "$$\np _ {\\mathrm{s}} = p _ {\\mathrm{m}} \\left[ \\frac {3 0}{T - T _ {\\mathrm{A}}} \\right] ^ {1. 2 5}\\tag{B.1}\n$$",
+      "page": 81,
+      "count": 1,
+      "reason": "对照 PDF 第81页：清除公式编号的点引导线，保留编号 B.1，不改公式运算项。"
+    },
+    {
+      "before": "$$\n(+ 0. 8 \\Phi_ {3} t _ {3} - p _ {\\mathrm{s1}} (t _ {3 -} t _ {\\mathrm{F}}) - p _ {\\mathrm{s2}} t _ {\\mathrm{F}})\n$$",
+      "after": "$$\n(+ 0. 8 \\Phi_ {3} t _ {3} - p _ {\\mathrm{s1}} (t _ {3} - t _ {\\mathrm{F}}) - p _ {\\mathrm{s2}} t _ {\\mathrm{F}})\n$$",
+      "page": 81,
+      "count": 1,
+      "reason": "对照 PDF 第81页：括号内为 t_3 - t_F；OCR 将减号错误并入下标。"
+    },
+    {
+      "before": "$$\n\\varphi \\left[ \\mathrm{NO} _ {x (\\alpha = 1)} \\right] = \\frac {1 3 . 3 3 - 1 . 5 2}{1 3 . 3 3 - x} \\times \\frac {\\varphi (\\mathrm{NO} _ {x} ^ {\\prime}) - \\varphi (\\mathrm{NO} _ {x} ^ {\\prime \\prime})}{\\varphi (\\mathrm{CO} _ {2 \\mathrm{a}}) - \\varphi (\\mathrm{CO} _ {2 \\mathrm{b}})} \\times \\alpha\\tag{……(E.1}\n$$",
+      "after": "$$\n\\varphi \\left[ \\mathrm{NO} _ {x (\\alpha = 1)} \\right] = \\frac {1 3 . 3 3 - 1 . 5 2}{1 3 . 3 3 - x} \\times \\frac {\\varphi (\\mathrm{NO} _ {x} ^ {\\prime}) - \\varphi (\\mathrm{NO} _ {x} ^ {\\prime \\prime})}{\\varphi (\\mathrm{CO} _ {2 \\mathrm{a}}) - \\varphi (\\mathrm{CO} _ {2 \\mathrm{b}})} \\times \\alpha\\tag{E.1}\n$$",
+      "page": 99,
+      "count": 1,
+      "reason": "对照 PDF 第99页：清除公式编号的点引导线，保留编号 E.1，不改公式运算项。"
+    }
+  ]
+}

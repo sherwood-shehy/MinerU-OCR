@@ -71,6 +71,19 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("path")
     publish.add_argument("--output-dir", type=Path, required=True)
     publish.add_argument("--name", help="Optional output filename stem")
+    publish.add_argument("--image-dir", choices=["assets", "images"], default="assets")
+    readable = sub.add_parser("readable", help="Prepare a traceable reading edition locally from existing OCR results")
+    readable.add_argument("path")
+    readable.add_argument("--source-pdf", type=Path, required=True)
+    readable.add_argument("--output-dir", type=Path, required=True)
+    readable.add_argument("--name")
+    readable.add_argument("--title")
+    readable.add_argument("--review-file", type=Path, help="Explicit source-checked corrections; optional")
+    readable.add_argument("--profile", choices=["generic", "gas-std-wiki"], default="generic")
+    readable.add_argument("--edition", choices=["reading", "source"], help="Default: reading; gas-std-wiki defaults to source")
+    readable.add_argument("--table-format", choices=["html", "auto"], help="Auto converts only safely representable tables")
+    readable.add_argument("--target-project", type=Path, help="Read and fingerprint target wiki rules; never ingest automatically")
+    readable.add_argument("--source-id", help="Source identifier used in Chinese delivery records")
     validate = sub.add_parser("validate", help="Check local resource references and manifest hashes offline")
     validate.add_argument("path")
     config = sub.add_parser("config")
@@ -102,7 +115,7 @@ def _enhance_results(results: list[dict], *, best_effort: bool = False) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command not in {"publish", "validate"}:
+    if args.command not in {"publish", "validate", "readable"}:
         load_dotenv()
     try:
         if args.command == "process":
@@ -127,7 +140,13 @@ def main(argv: list[str] | None = None) -> int:
             result = enhance_output(args.result_dir)
         elif args.command == "publish":
             from .publish import publish_output
-            result = publish_output(args.path, args.output_dir, name=args.name)
+            result = publish_output(args.path, args.output_dir, name=args.name, image_dir=args.image_dir)
+        elif args.command == "readable":
+            from .readable import prepare_readable
+            result = prepare_readable(args.path, args.source_pdf, args.output_dir,
+                                      name=args.name, title=args.title, review_file=args.review_file,
+                                      profile=args.profile, edition=args.edition, table_format=args.table_format,
+                                      target_project=args.target_project, source_id=args.source_id)
         elif args.command == "validate":
             from .publish import validate_output
             result = validate_output(args.path)

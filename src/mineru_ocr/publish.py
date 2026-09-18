@@ -55,14 +55,52 @@ def validate_output(path: str | Path) -> dict:
         file = local_resource(markdown.parent, item['path'])
         if file is None or digest_file(file) != item['sha256']:
             raise MinerUOCRError('Evidence file hash mismatch')
+    for item in prior.get('delivery_documents', []):
+        file = local_resource(markdown.parent, item['path'])
+        if file is None or digest_file(file) != item['sha256']:
+            raise MinerUOCRError('Delivery document hash mismatch')
+        for ref in references(file.read_text(encoding='utf-8')):
+            local_resource(file.parent, ref.target)
+    if prior.get('postprocess'):
+        for file in [markdown, *[markdown.parent / item['path'] for item in prior.get('delivery_documents', [])]]:
+            _validate_generated_anchors(file)
     return {'valid': True, 'markdown': str(markdown), 'asset_count': len(current['assets']),
             'doc_id': current['doc_id'], 'external_images': current['external_images']}
 
 
-def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None = None) -> dict:
+def _validate_generated_anchors(markdown: Path) -> None:
+    from urllib.parse import unquote
+    from .references import _without_code
+    text = _without_code(markdown.read_text(encoding='utf-8'))
+    ids = re.findall(r'<a\s+id=["\x27]([^"\x27]+)', text)
+    if len(ids) != len(set(ids)):
+        raise MinerUOCRError('Duplicate explicit anchors in delivery')
+    cache = {markdown: set(ids)}
+    for ref in references(text):
+        parsed = urlsplit(ref.target)
+        if parsed.scheme or not parsed.fragment.startswith(('body-', 'commentary', 'appendix-', 'heading-', 'source-page', 'supplement-')):
+            continue
+        target = local_resource(markdown.parent, ref.target) if parsed.path else markdown
+        if target and target.suffix.lower() == '.md':
+            if target not in cache:
+                cache[target] = set(re.findall(r'<a\s+id=["\x27]([^"\x27]+)',
+                                              _without_code(target.read_text(encoding='utf-8'))))
+            if unquote(parsed.fragment) not in cache[target]:
+                raise MinerUOCRError('Broken generated source anchor')
+
+
+def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None = None,
+                   image_dir: str = 'assets') -> dict:
+    if image_dir not in {'assets', 'images'}:
+        raise MinerUOCRError('Resource directory must be assets or images')
     source = source_markdown(path)
     validate_output(source)
     manifest = build_manifest(source)
+    manifest.pop('delivery_documents', None)  # regenerated for the destination publication
+    report_suffixes = ()
+    if manifest.get('postprocess'):
+        from .delivery import REPORT_SUFFIXES
+        report_suffixes = REPORT_SUFFIXES
     text = source.read_text(encoding='utf-8')
     resources = {ref.target: local_resource(source.parent, ref.target) for ref in references(text)}
     evidence = [(entry, local_resource(source.parent, entry['path'])) for entry in manifest.get('evidence_files', [])]
@@ -78,7 +116,7 @@ def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None
     for target, file in resources.items():
         if file is None:
             continue
-        stored = _store_asset(file, output / 'assets')
+        stored = _store_asset(file, output / image_dir)
         relative = stored.relative_to(output).as_posix()
         paths[file.relative_to(source.parent).as_posix()] = relative
         parsed = urlsplit(target)
@@ -118,7 +156,8 @@ def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None
         markdown = output / (candidate + '.md')
         sidecar = manifest_path(markdown)
         lock = output / ('.' + candidate + '.publish.lock')
-        if any(file.exists() for file in [markdown, sidecar, output / (candidate + '.ai.jsonl')]):
+        if any(file.exists() for file in [markdown, sidecar, output / (candidate + '.ai.jsonl'),
+                                         *[output / (candidate + suffix) for suffix in report_suffixes]]):
             index += 1
             continue
         try:
@@ -140,6 +179,19 @@ def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None
         # Only newly-created files are removed if this transaction fails.
         created = []
         try:
+            reports = {}
+            if report_suffixes:
+                from .delivery import report_documents
+                audit_entry = next(e for e in manifest['evidence_files'] if e.get('role') == 'readability_audit')
+                audit = json.loads((output / audit_entry['path']).read_text(encoding='utf-8'))
+                reports = report_documents(manifest, audit)
+                manifest['delivery_documents'] = []
+                for suffix, content in reports.items():
+                    report = output / (candidate + suffix)
+                    with report.open('x', encoding='utf-8', newline='\n') as handle:
+                        created.append(report)
+                        handle.write(content)
+                    manifest['delivery_documents'].append({'path': report.name, 'sha256': digest_file(report)})
             with sidecar.open('x', encoding='utf-8', newline='\n') as handle:
                 created.append(sidecar)
                 json.dump(manifest, handle, ensure_ascii=False, indent=2)
@@ -154,4 +206,5 @@ def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None
     finally:
         lock.unlink(missing_ok=True)
     return {'published': True, 'markdown': str(markdown), 'manifest': str(sidecar),
-            'doc_id': manifest['doc_id'], 'asset_count': len(manifest['assets'])}
+            'doc_id': manifest['doc_id'], 'asset_count': len(manifest['assets']),
+            'delivery_documents': [str(output / entry['path']) for entry in manifest.get('delivery_documents', [])]}

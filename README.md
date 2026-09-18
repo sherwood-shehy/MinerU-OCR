@@ -6,9 +6,22 @@ Long-document OCR orchestration for the [MinerU](https://mineru.net/) Cloud API,
 
 MinerU OCR is designed for local PDFs that are larger than a single API request can safely handle. It plans page ranges, uploads and monitors each part, resumes partial failures, downloads the MinerU result archives, and merges the resulting Markdown and referenced assets in source-page order.
 
-> `process` and `submit` upload documents to MinerU Cloud. Optional `enhance` sends document text and referenced images to the configured Doubao service. `publish` and `validate` run locally without service credentials.
+> `process` and `submit` upload documents to MinerU Cloud. Optional `enhance` sends document text and referenced images to the configured Doubao service. `publish`, `readable`, and `validate` run locally without service credentials.
 
-## What's New in 0.2.0
+Version 0.3.0 combines MinerU extraction with traceable offline postprocessing for human reading and LLM Wiki source preparation. See [usage](#offline-postprocessing-for-reading-and-wiki-sources) and the detailed [postprocessing workflow](docs/readable-workflow.md) (Chinese).
+
+## What's New in 0.3.0
+
+- **Two delivery modes.** `readable` creates a reading edition with navigation and collapsible source pages. `--profile gas-std-wiki` defaults to a source edition, keeping the body and its review records in separate files. Existing OCR results are reused locally.
+- **Selective Markdown tables.** `--table-format auto` converts simple rectangular tables only when the header is explicit or checked against the source. Empty cells, numbers, units and inline formulas are checked cell by cell; merged cells, multiple headers and other complex tables retain HTML. `html` preserves every table.
+- **Conservative cleanup and correction.** Repeated headers require margin evidence, and structure cleanup preserves non-whitespace content. Source-checked replacements have exact before/after text, occurrence counts, PDF pages and reasons; a mismatch stops processing. Tables, display math and fenced code are protected during heading normalization.
+- **Source-bound locators and images.** Recognized body, appendix and commentary clauses use separate anchor namespaces. Figures can be cropped from the matching PDF, with original/crop relationships and source-page links. Unknown positions stay explicit, and numbered figure legends do not reset clause partitions.
+- **Complete source packages.** The main Markdown is accompanied by a manifest and Chinese provenance, locator/image and correction/gap records. `images/` holds published images; `evidence/` retains an original-input ZIP and audit JSON. Validation includes companion hashes and generated anchors, and publication avoids collisions for the entire file family.
+- **Wiki preparation in the Skill.** The updated Skill guides deterministic processing, source checks and acceptance. The target project's current rules are read and fingerprinted; source registration, knowledge extraction and human acceptance remain part of that project's ingestion workflow. AI enhancement is optional.
+
+Validated on the existing 108-page GB 6932—2015 scan: **8 of 56 tables converted to Markdown, 48 retained as HTML, 14 recorded corrections**, and source links for all 56 tables and 6 display-math blocks. All **92 offline tests** passed. Independent GFM rendering preserved the row/cell text of all 8 converted tables. This checks processing fidelity; it is not a full OCR accuracy assessment.
+
+## Previous Release: 0.2.0
 
 This release turns OCR results into traceable multimodal knowledge materials: source Markdown, an asset/provenance manifest, and optional AI-derived JSONL.
 
@@ -41,6 +54,7 @@ This project implements that orchestration while leaving OCR inference to MinerU
 - **Resumable jobs** — persists local job metadata and can retry only failed parts.
 - **Ordered Markdown merge** — combines completed parts in original page order with invisible source-page markers.
 - **Asset rewriting** — safely extracts result ZIP files and rewrites relative Markdown/HTML resource links.
+- **Offline postprocessing** — produces reading or Wiki source editions, selectively converts tables, and retains source snapshots and review records.
 - **Small Office support** — directly submits DOC/DOCX, PPT/PPTX, and XLS/XLSX files within the configured limits.
 - **CLI interface** — supports shell automation and Agent Skill workflows.
 - **Per-user credentials** — accepts `MINERU_API_TOKEN` or a local plaintext user configuration file without committing the token to the repository.
@@ -75,13 +89,19 @@ Agent Skill / CLI
    ├─ ordered Markdown
    ├─ rewritten assets
    └─ provenance manifest
+             │
+             ▼
+    Optional offline postprocessing
+   ├─ reading or Wiki source edition
+   ├─ selective table conversion and PDF image extraction
+   └─ source snapshot, locators and review records
 ```
 
 ## Requirements
 
 - Python 3.11 or newer
-- A MinerU API token from the [MinerU API management page](https://mineru.net/apiManage/docs)
-- Network access to MinerU and its signed upload/download endpoints
+- For cloud extraction: a MinerU API token from the [MinerU API management page](https://mineru.net/apiManage/docs) and network access to its endpoints
+- For offline `readable`: the optional PyMuPDF dependency, the matching original PDF, and retained adapted Content List evidence
 
 Core dependencies are installed automatically: `httpx`, `pydantic`, `pypdf`, `platformdirs`, and `python-dotenv`.
 
@@ -99,6 +119,14 @@ Install test dependencies when developing:
 
 ```bash
 python -m pip install -e ".[test]"
+```
+
+Install the optional offline postprocessor when needed:
+
+```bash
+python -m pip install -e ".[readable]"
+# To run the complete suite, including PDF postprocessing tests:
+python -m pip install -e ".[test,readable]"
 ```
 
 ### 2. Configure the MinerU token
@@ -193,6 +221,32 @@ mineru-ocr config clear-token
 
 The `show` command reports only the configuration path and selected source; it never prints the token.
 
+### Offline postprocessing for reading and Wiki sources
+
+Use a completed `.mineru` result directory or a published Markdown with its manifest. The source PDF hash and page count must match its provenance. These commands do not repeat OCR or require a service token.
+
+```bash
+# General reading edition: navigation, source-page gallery, original HTML tables
+mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/reading --name report-reading
+
+# General Wiki source edition: body plus separate records, selective Markdown tables
+mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/wiki --name report-source --edition source --table-format auto
+
+# gas-std-wiki defaults, target rule fingerprints and source-checked corrections
+mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/gas-wiki --name report-source --profile gas-std-wiki --target-project /path/to/gas-std-wiki --source-id GB-EXAMPLE --review-file review.json
+
+mineru-ocr validate outputs/gas-wiki/report-source.md
+```
+
+The last example is an alternative using a matching target checkout and review file. `--target-project` reads nine current rule files without modifying that project. Omit `--review-file` when no source-checked corrections or header confirmations are available. Explicit `--edition` and `--table-format` options override profile defaults.
+
+| Profile | Default edition | Default table format |
+|---|---|---|
+| `generic` | `reading` | `html` |
+| `gas-std-wiki` | `source` | `auto` |
+
+Markdown tables suit simple two-dimensional data. GFM cannot express merged cells or multiple header rows, so complex tables remain HTML. When MinerU uses only `<td>`, the first row is not assumed to be a header: source confirmation is required. See the [table and review contract](.agents/skills/mineru-ocr/references/postprocessing.md) and [worked review configuration](docs/examples/gb6932-2015-wiki-review.json). Review records are tied to a particular source hash and cannot be reused blindly on another PDF.
+
 ## Processing Rules
 
 ### PDFs up to 200 MB
@@ -244,6 +298,20 @@ mineru-ocr validate knowledge/report.md
 ```
 
 Publish source materials first, then enhance the published Markdown. `publish` does not migrate old AI JSONL files; earlier outputs remain in the source package. Re-running `enhance` atomically replaces only that Markdown's derived JSONL. See the [knowledge-material contract](.agents/skills/mineru-ocr/references/knowledge-materials.md) for IDs, precise/range/unknown locators, visual evidence, review status and ingestion rules.
+
+`readable` publishes a larger, self-contained local file family:
+
+```text
+report-source.md
+report-source.manifest.json
+report-source.来源说明.md
+report-source.定位与图片清单.md
+report-source.校勘与缺口.md
+images/
+evidence/
+```
+
+The three companion files record provenance and pending metadata; version-bound clause/image locations; and exact corrections, table decisions and unresolved gaps. Evidence includes the byte-preserved input PDF, OCR Markdown, manifest and local referenced resources in a ZIP, plus a processing audit. Keep the whole family and its referenced resources together when moving it. `publish --image-dir images` also selects `images/` for ordinary publication.
 
 ## AI Enhancement
 
@@ -352,6 +420,8 @@ Run the offline suite:
 python -m pytest --basetemp .test-tmp -p no:cacheprovider
 ```
 
+Version 0.3.0 passes 92 offline tests, including selective table conversion, source-bound review files, separate clause namespaces, immutable input snapshots, companion reports and generated-anchor validation. The 108-page GB 6932 sample retained all 56 tables; 8 converted tables also passed independent GFM rendering checks.
+
 Version 0.2.0 passed 68 offline tests on Python 3.12.2. The tests cover:
 
 - 199/200/201/400-page planning boundaries;
@@ -369,6 +439,10 @@ Version 0.2.0 passed 68 offline tests on Python 3.12.2. The tests cover:
 On restricted Windows environments, keep the explicit `--basetemp` option because the default user temporary directory may be inaccessible.
 
 ## Real-World Validation
+
+For 0.3.0, the existing 108-page GB 6932—2015 OCR bundle was processed offline into a Wiki source edition. It retained all 56 tables (8 Markdown, 48 HTML), 42 PDF-derived figure crops, 89 referenced source-page images and 497 chapter/appendix/clause locators. All tables and 6 display-math blocks have source-page links. Original-input ZIP integrity, input byte hashes and final resource/companion/anchor validation passed. An independent Marked GFM render preserved every converted table's row/cell text.
+
+The sample has 14 recorded corrections and two clause-to-PDF mappings left unknown (7.3.3 and 7.7.5). Other pages remain in the original PDF snapshot. Full OCR completeness, every numeric cell, visual technical meaning, meaningful font weight, current standard status and human acceptance were not certified. The sample demonstrates source preparation; it did not automatically ingest material into the target Wiki.
 
 For 0.2.0, a separate offline acceptance run published an existing 1,545,149-byte Chinese Markdown document with 17 valid resources. Test-double AI responses exercised the enhancement pipeline, producing 251 JSONL records and 18 model input segments with unique IDs. Source content was unchanged apart from published resource targets, and enhancement left the published Markdown unchanged. This verifies local processing, not live OCR or vision-model accuracy.
 
@@ -390,6 +464,8 @@ pyproject.toml               Package metadata, dependencies, and command entry p
 - Large Office documents are not split automatically.
 - Physical PDF splitting cannot process a single page that remains above the safe upload threshold.
 - Cross-part semantic repair (for example, reconstructing a table split exactly at a page-range boundary) is intentionally not attempted.
+- Offline postprocessing requires a matching PDF and adapted legacy Content List evidence. Unsupported or ambiguous locations remain unknown; rotated-page figure crops are not inferred.
+- Mixed HTML/Markdown tables and formulas require a compatible reader. Formatting invariants, successful image decoding and valid links do not establish OCR accuracy or human review.
 
 ## Contributing
 
