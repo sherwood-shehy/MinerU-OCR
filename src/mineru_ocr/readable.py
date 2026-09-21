@@ -14,10 +14,12 @@ from types import SimpleNamespace
 import zipfile
 
 from .errors import MinerUOCRError
-from .provenance import _page_number, build_manifest, digest_file, manifest_path, read_manifest
-from .publish import publish_output, source_markdown, validate_output
+from .provenance import _page_number, build_manifest, digest_file, manifest_path
+from .publish import publish_output, source_for_processing
 from .references import local_resource, references, rewrite_references
 from .delivery import target_rules
+from .records import check_work_dir
+from .visuals import apply_image_review
 from .locators import LocatorIndex
 from .tables import convert_table, table_hash
 
@@ -53,7 +55,8 @@ def content_fingerprint(text: str) -> str:
     return hashlib.sha256(compact(value).encode('utf-8')).hexdigest()
 
 
-def normalize_structure(text: str, removable: set[str], preserve_first: set[str] | None = None) -> tuple[str, dict]:
+def normalize_structure(text: str, removable: set[str], preserve_first: set[str] | None = None, *,
+                        preserve_headings: bool = False) -> tuple[str, dict]:
     text, protected = protect_blocks(text)
     paragraphs = re.split(r'\n\s*\n', text.strip())
     kept, removed, continuations = [], [], []
@@ -98,14 +101,14 @@ def normalize_structure(text: str, removable: set[str], preserve_first: set[str]
                 i += 1
         numbered = re.match(r'^(' + NUMBER + r')(?:\s+)(.+)$', value)
         is_heading = paragraph.startswith('#')
-        if numbered and (is_heading or (len(value) < 65 and not re.search(r'[。；;：:]$', value))):
+        if numbered and (is_heading or (not preserve_headings and len(value) < 65 and not re.search(r'[。；;：:]$', value))):
             level = min(6, numbered.group(1).count('.') + 2)
             paragraph = '#' * level + ' ' + value
         elif re.fullmatch(r'附录\s*[A-Z]', value) or compact(value) in {
                 '前言', '目次', '目录', '条文说明', '标准条文说明', '规范条文说明',
                 '本规范用词说明', '本标准用词说明', '引用标准名录', '参考文献'}:
             paragraph = '## ' + value
-        elif is_heading:
+        elif is_heading and not preserve_headings:
             # Cover labels, captions and appendix subtitles remain verbatim text.
             paragraph = value
         output.append(paragraph)
@@ -123,6 +126,15 @@ def _layout(source: Path, manifest: dict) -> list[dict]:
     result = []
     parts = {p['index']: SimpleNamespace(**p) for p in manifest.get('parts', [])}
     for entry in manifest.get('evidence_files', []):
+        if entry.get('adapter') == 'pymupdf4llm_pages_v1' and entry.get('adapter_status') == 'adapted':
+            file = local_resource(source.parent, entry['path'])
+            data = json.loads(file.read_text(encoding='utf-8'))
+            if (not isinstance(data, list) or any(not isinstance(b, dict) or type(b.get('page')) is not int
+                    or not 1 <= b['page'] <= manifest.get('page_count', 0) for b in data)):
+                raise MinerUOCRError('Invalid native page-layout evidence')
+            result.extend({**block, '_page': block['page'], '_evidence': entry['path'] + f'#/{index}'}
+                          for index, block in enumerate(data))
+            continue
         if entry.get('adapter_status') != 'adapted' or entry.get('part_index') not in parts:
             continue
         file = local_resource(source.parent, entry['path'])
@@ -166,36 +178,42 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
                      name: str | None = None, title: str | None = None,
                      review_file: Path | None = None, profile: str = 'generic',
                      edition: str | None = None, table_format: str | None = None,
-                     target_project: Path | None = None, source_id: str | None = None) -> dict:
+                     target_project: Path | None = None, source_id: str | None = None,
+                     work_dir: Path | None = None) -> dict:
     try:
         import pymupdf as fitz
     except ImportError as exc:
         raise MinerUOCRError('Reading editions require the optional PyMuPDF dependency') from exc
     if profile not in {'generic', 'gas-std-wiki'}:
         raise MinerUOCRError('Unknown delivery profile')
-    edition = edition or ('source' if profile == 'gas-std-wiki' else 'reading')
-    table_format = table_format or ('auto' if profile == 'gas-std-wiki' else 'html')
+    edition = edition or 'source'
+    table_format = table_format or 'auto'
     if edition not in {'reading', 'source'} or table_format not in {'html', 'auto'}:
         raise MinerUOCRError('Unknown edition or table format')
     rules = target_rules(target_project)
-    source = source_markdown(path)
-    validate_output(source)
-    metadata = read_manifest(source)
+    source = source_for_processing(path, work_dir)
+    metadata = build_manifest(source)
     pdf = Path(source_pdf).resolve()
     source_hash = digest_file(pdf)
     if not metadata.get('source_sha256') or metadata['source_sha256'] != source_hash:
-        raise MinerUOCRError('Source PDF hash does not match the OCR manifest')
+        raise MinerUOCRError('Source PDF hash does not match the extraction manifest')
+    native = metadata.get('engine') == 'pymupdf4llm'
+    if native and metadata.get('native_quality_passed') is not True:
+        raise MinerUOCRError('Native extraction has not passed the local quality checks')
     review_data = json.loads(Path(review_file).read_text(encoding='utf-8')) if review_file else {}
+    if not isinstance(review_data, dict):
+        raise MinerUOCRError('Review file must be a JSON object')
     if review_file:
         review_hash = review_data.get('source_sha256')
         if review_hash and review_hash != source_hash:
             raise MinerUOCRError('Review file source hash does not match the PDF')
     blocks = _layout(source, metadata)
     if not blocks:
-        raise MinerUOCRError('Reading edition requires adapted MinerU Content List evidence')
+        raise MinerUOCRError('Postprocessing requires adapted MinerU or native page-layout evidence')
     out = Path(output_dir).resolve()
-    out.mkdir(parents=True, exist_ok=True)
-    with fitz.open(pdf) as doc, tempfile.TemporaryDirectory(prefix='.readable-', dir=out) as temporary:
+    root = check_work_dir(out, work_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    with fitz.open(pdf) as doc, tempfile.TemporaryDirectory(prefix='.readable-', dir=root) as temporary:
         if metadata.get('page_count') != len(doc):
             raise MinerUOCRError('Source PDF page count does not match the OCR manifest')
         stage = Path(temporary)
@@ -211,7 +229,8 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
             target = stage / file.relative_to(source.parent)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(file, target)
-        revised, corrections = _apply_review(original, review_file, len(doc))
+        filtered, image_decisions = apply_image_review(original, source.parent, metadata, review_data)
+        revised, corrections = _apply_review(filtered, review_file, len(doc))
         header_reviews = review_data.get('table_headers', [])
         available_tables = {table_hash(t) for t in TABLE.findall(revised)}
         for item in header_reviews:
@@ -228,10 +247,11 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         # Repetition and layout classification are both required; cover-only metadata stays.
         removable = {text for text, count in running.items() if text and count >= 3}
         cover_text = {compact(b.get('text', '')) for b in blocks if b['_page'] == 1}
-        normalized, audit = normalize_structure(revised, removable, cover_text)
+        normalized, audit = normalize_structure(revised, removable, cover_text, preserve_headings=native)
         # Repeated headers may be emitted with different spacing; retain every removal in the log.
         audit.update({'schema_version': '1.0', 'source_sha256': source_hash,
                       'input_markdown_sha256': digest_file(source), 'reviewed_corrections': corrections,
+                      'image_actions': image_decisions,
                       'page_count': len(doc), 'layout_block_counts': dict(Counter(b['type'] for b in blocks)),
                       'suspect_header_blocks': [{'text': b.get('text'), 'page': b['_page'], 'bbox': b.get('bbox')}
                                                 for b in blocks if b.get('type') == 'header' and not margin_line(b)],
@@ -241,6 +261,8 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
                                       'Font weight and mandatory-provision formatting require source-image review.',
                                       'Existing table grouping is preserved; no additional inferred cell merging.']})
         metadata = copy.deepcopy(metadata)
+        if image_decisions:
+            metadata['image_review'] = {'input_markdown_sha256': digest_file(source), 'actions': image_decisions}
         locations = {}
         page_paths = {}
         (stage / 'source-images').mkdir()
@@ -341,6 +363,9 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         normalized = TABLE.sub(lambda m: verified(m, 'table'), normalized)
         normalized = EQUATION.sub(lambda m: verified(m, 'equation'), normalized)
         rendered = rewrite_references(normalized, replacements)
+        if native:
+            rendered = re.sub(r'^<!-- PDF source page (\d+) -->$',
+                              lambda m: '原文：' + page_link(int(m[1])), rendered, flags=re.M)
         labels = {path: '、'.join(locs[0].get('figure_captions', [])) or f'PDF第{locs[0]["page"]}页图像区域（图题待核实）'
                   for path, locs in locations.items() if locs[0].get('bbox')}
         rendered = re.sub(r'!\[\]\(([^)\n]+)\)',
@@ -349,7 +374,7 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         # Keep the OCR table of contents, but collapse it below the navigable reading contents.
         toc_pattern = r'## (?:目次|目录)\n(.*?)\n(?=## 前言)'
         toc = re.search(toc_pattern, rendered, re.S)
-        if toc and len(re.findall(r'……|\.{3,}', toc.group(1))) >= 3:
+        if not native and toc and len(re.findall(r'……|\.{3,}', toc.group(1))) >= 3:
             audit['original_toc_archived'] = toc.group(0)
             rendered = re.sub(toc_pattern, lambda m: '' if edition == 'source' else
                               '<details>\n<summary>原书目录（OCR）</summary>\n' + m.group(1) + '\n</details>\n\n',
@@ -389,7 +414,7 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         rendered = restore_blocks(rendered, protected)
         document_title = title or Path(metadata.get('source_name', source.stem)).stem
         intro = (f'# {document_title}\n\n'
-                 '> 阅读整理版：基于 MinerU OCR，章节、表格和图片可回看原页。'
+                 '> 阅读整理版：基于原文提取，章节、表格和图片可回看原页。'
                  '数值、公式和粗体含义请结合原页核对。\n\n'
                  '## 阅读导航\n\n' + '\n'.join(navigation) +
                  '\n- [逐页原文影像](#source-pages)\n\n---\n\n')
@@ -400,8 +425,8 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
                            f'<summary>PDF 第 {number} 页</summary>\n\n'
                            f'![原文 PDF 第 {number} 页]({relative})\n\n</details>\n')
         final_text = (intro + rendered + '\n'.join(gallery) if edition == 'reading' else
-                      f'# {document_title}\n\n<!-- 源材料整理版；校勘与检查状态见同名交付清单。 -->\n\n'
-                      + '[原始封面影像](' + page_paths[1] + ')\n\n' + rendered)
+                      f'# {document_title}\n\n<!-- 源材料整理版；原文核对链接指向 images 中的原页图像。 -->\n\n'
+                      + '[原文首页影像](' + page_paths[1] + ')\n\n' + rendered)
         audit.update({'heading_levels': dict(Counter(h['level'] for h in headings)), 'headings': headings,
                       'adjacent_table_region_links': continuations,
                       'source_figure_crops': figure_audit, 'source_page_images': len(page_paths),
@@ -442,14 +467,14 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         metadata.setdefault('evidence_files', []).append({'path': 'evidence/readability-review.json',
                                                          'sha256': digest_file(audit_file), 'role': 'readability_audit'})
         metadata['asset_locations'] = locations
-        metadata['reading_edition'] = {'processor': 'mineru_ocr.readable', 'version': '2.0',
+        metadata['reading_edition'] = {'processor': 'mineru_ocr.readable', 'version': '3.0',
                                       'input_markdown_sha256': digest_file(source),
                                       'reviewed_correction_count': len(corrections)}
         staged_md = stage / 'reading.md'
         staged_md.write_text(final_text, encoding='utf-8', newline='\n')
         manifest_path(staged_md).write_text(json.dumps(build_manifest(staged_md, metadata), ensure_ascii=False, indent=2), encoding='utf-8')
-        suffix = '（阅读整理版）' if edition == 'reading' else '（Wiki源材料）'
-        result = publish_output(staged_md, out, name=name or document_title + suffix, image_dir='images')
+        suffix = '（阅读整理版）' if edition == 'reading' else '（源材料）'
+        result = publish_output(staged_md, out, name=name or document_title + suffix, work_dir=root)
         result['review'] = {k: v for k, v in audit.items() if k not in {
             'headings', 'source_figure_crops', 'removed_running_lines', 'joined_term_headings',
             'clause_locators', 'original_toc_archived'}}

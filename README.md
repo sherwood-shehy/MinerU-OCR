@@ -1,483 +1,129 @@
-# MinerU OCR
+# MinerU OCR 0.4.1
 
 [简体中文](README_zh-CN.md) | English
 
-Long-document OCR orchestration for the [MinerU](https://mineru.net/) Cloud API, packaged as a Python CLI and a reusable Agent Skill.
+Convert original documents into **faithful, traceable, AI-readable Markdown material packages** for ordinary readers, LLM Wikis and RAG systems.
 
-MinerU OCR is designed for local PDFs that are larger than a single API request can safely handle. It plans page ranges, uploads and monitors each part, resumes partial failures, downloads the MinerU result archives, and merges the resulting Markdown and referenced assets in source-page order.
+A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud OCR, resumable jobs and conservative offline postprocessing. Knowledge synthesis, visual interpretation, embeddings and ingestion belong to downstream systems.
 
-> `process` and `submit` upload documents to MinerU Cloud. Optional `enhance` sends document text and referenced images to the configured Doubao service. `publish`, `readable`, and `validate` run locally without service credentials.
+## Changes in 0.4.1
 
-Version 0.3.0 combines MinerU extraction with traceable offline postprocessing for human reading and LLM Wiki source preparation. See [usage](#offline-postprocessing-for-reading-and-wiki-sources) and the detailed [postprocessing workflow](docs/readable-workflow.md) (Chinese).
+- `preflight` checks every physical PDF page for native text, bad mappings, hidden text, image coverage and sparse/blank pages. A selectable text layer alone is insufficient.
+- `process --engine auto` (default) uses PyMuPDF4LLM for eligible PDFs; uncertain/scanned PDFs and failed native quality checks use MinerU Cloud. `--engine local` never uploads; `--engine cloud` explicitly selects the existing cloud path. Mixed PDFs are routed as a whole.
+- Local extraction disables OCR, preserves raw page chunks and HTML tables, and checks page coverage, text retention, numeric tokens and detected table cells before publication. Missing dependencies and runtime failures are not silently converted into uploads.
+- Both engines share source-page postprocessing, review decisions, image deduplication, portable publication and validation. Native page evidence has its own adapter; it is not labeled as MinerU Content List.
+- `doctor` checks package versions/imports and provides setup guidance. Copying a skill does not install its CLI or Python dependencies.
 
-## What's New in 0.3.0
+## Changes in 0.4.0
 
-- **Two delivery modes.** `readable` creates a reading edition with navigation and collapsible source pages. `--profile gas-std-wiki` defaults to a source edition, keeping the body and its review records in separate files. Existing OCR results are reused locally.
-- **Selective Markdown tables.** `--table-format auto` converts simple rectangular tables only when the header is explicit or checked against the source. Empty cells, numbers, units and inline formulas are checked cell by cell; merged cells, multiple headers and other complex tables retain HTML. `html` preserves every table.
-- **Conservative cleanup and correction.** Repeated headers require margin evidence, and structure cleanup preserves non-whitespace content. Source-checked replacements have exact before/after text, occurrence counts, PDF pages and reasons; a mismatch stops processing. Tables, display math and fenced code are protected during heading normalization.
-- **Source-bound locators and images.** Recognized body, appendix and commentary clauses use separate anchor namespaces. Figures can be cropped from the matching PDF, with original/crop relationships and source-page links. Unknown positions stay explicit, and numbered figure legends do not reset clause partitions.
-- **Complete source packages.** The main Markdown is accompanied by a manifest and Chinese provenance, locator/image and correction/gap records. `images/` holds published images; `evidence/` retains an original-input ZIP and audit JSON. Validation includes companion hashes and generated anchors, and publication avoids collisions for the entire file family.
-- **Wiki preparation in the Skill.** The updated Skill guides deterministic processing, source checks and acceptance. The target project's current rules are read and fingerprinted; source registration, knowledge extraction and human acceptance remain part of that project's ingestion workflow. AI enhancement is optional.
-
-Validated on the existing 108-page GB 6932—2015 scan: **8 of 56 tables converted to Markdown, 48 retained as HTML, 14 recorded corrections**, and source links for all 56 tables and 6 display-math blocks. All **92 offline tests** passed. Independent GFM rendering preserved the row/cell text of all 8 converted tables. This checks processing fidelity; it is not a full OCR accuracy assessment.
-
-## Previous Release: 0.2.0
-
-This release turns OCR results into traceable multimodal knowledge materials: source Markdown, an asset/provenance manifest, and optional AI-derived JSONL.
-
-- **Checked publication.** New `publish`, `validate`, and `process --output-dir` commands deliver Markdown with validated resources. Shared assets use content hashes, document names avoid collisions, and original documents and result bundles are retained.
-- **Stable identities and source evidence.** Manifests carry `doc_id`, `asset_id`, source versions, file hashes, and every resource occurrence. Compatible Content List V1 maps images to source PDF pages and bounding boxes; other cases explicitly record a page range or unknown location. Upstream layout JSON is retained in `evidence/`.
-- **Structured visual understanding.** Optional AI JSONL separates visible observations from contextual interpretation, with fields for mechanical dimensions, flowchart relationships, and chart content. Dimension, unit, and tolerance strings remain unconverted. Generation metadata, per-image failures, unsupported formats, and review status remain explicit; native SVG assets are preserved.
-- **Source fidelity and reliable references.** Fixes preserve empty table cells, numeric lines, HTML images, repeated references, and the correct page ranges. Full, collapsed, and shortcut references are supported; labels are isolated across merged parts so one part cannot redirect another part's image. Enhancement analyzes only the current document's images.
-- **Bounded processing and safer retries.** Long lines are split without silent truncation; model input segments are bounded at 40,000 characters and retrieval text chunks at 8,000. Dotted filenames retain distinct outputs, repeated enhancement atomically replaces only its JSONL, and a failed merge can resume after downloads finish.
-- **CLI and Skill consolidation.** `mineru-ocr` is the maintained entry point, with an updated Agent Skill and [knowledge-material contract](.agents/skills/mineru-ocr/references/knowledge-materials.md). Python 3.11+ is required; the previous `mineru-ocr-mcp` entry point and MCP dependency have been removed.
-
-Publish first, then enhance the final Markdown so JSONL references use the published asset paths. An `ok` AI result has passed structural validation and still requires review; it is not a verified technical conclusion.
-
-## Background
-
-MinerU provides high-quality document parsing for PDFs, scanned pages, tables, formulas, images, and common Office formats. Its API is asynchronous and applies per-request file/page limits. Calling the API directly is straightforward for a short document, but long PDFs require additional orchestration:
-
-- determine deterministic page ranges;
-- avoid uploading an over-limit physical file;
-- track several asynchronous tasks as one document;
-- retry only failed parts;
-- merge Markdown and assets without losing source order.
-
-This project implements that orchestration while leaving OCR inference to MinerU. It complements—not replaces—the official [MinerU Document Extractor Skill and `mineru-open-api` CLI](https://github.com/opendatalab/MinerU-Ecosystem).
-
-## Features
-
-- **Long PDF planning** — groups PDFs into continuous ranges of up to 200 pages.
-- **Logical page processing** — for PDFs up to 200 MB, uploads the complete source for each requested range and lets MinerU select the pages server-side.
-- **Oversized PDF handling** — physically splits PDFs over 200 MB; generated parts target a conservative 190 MB maximum.
-- **Resumable jobs** — persists local job metadata and can retry only failed parts.
-- **Ordered Markdown merge** — combines completed parts in original page order with invisible source-page markers.
-- **Asset rewriting** — safely extracts result ZIP files and rewrites relative Markdown/HTML resource links.
-- **Offline postprocessing** — produces reading or Wiki source editions, selectively converts tables, and retains source snapshots and review records.
-- **Small Office support** — directly submits DOC/DOCX, PPT/PPTX, and XLS/XLSX files within the configured limits.
-- **CLI interface** — supports shell automation and Agent Skill workflows.
-- **Per-user credentials** — accepts `MINERU_API_TOKEN` or a local plaintext user configuration file without committing the token to the repository.
-
-## When to Use Which MinerU Tool
-
-| Scenario | Recommended tool |
-| --- | --- |
-| Small document, URL, image, webpage, Flash mode, or multi-format export | Official [`mineru-open-api`](https://github.com/opendatalab/MinerU-Ecosystem/tree/main/cli/mineru-open-api) / `$mineru-document-extractor` |
-| PDF over 200 pages, PDF over 200 MB, resumable processing, or deterministic merge | This project: `mineru-ocr` / `$mineru-ocr` |
-| Search, deep reading, or knowledge-base workflows after extraction | [MinerU Document Explorer](https://github.com/opendatalab/MinerU-Document-Explorer) |
-
-## Architecture
-
-```text
-Agent Skill / CLI
-             │
-             ▼
-   Local planner and job store
-   ├─ page-range planning
-   ├─ optional physical PDF splitting
-   └─ resumable composite job
-             │
-             ▼
-      MinerU Cloud API v4
-   ├─ signed file uploads
-   ├─ asynchronous extraction
-   └─ result ZIP downloads
-             │
-             ▼
-    Safe extraction and merge
-   ├─ ordered Markdown
-   ├─ rewritten assets
-   └─ provenance manifest
-             │
-             ▼
-    Optional offline postprocessing
-   ├─ reading or Wiki source edition
-   ├─ selective table conversion and PDF image extraction
-   └─ source snapshot, locators and review records
-```
-
-## Requirements
-
-- Python 3.11 or newer
-- For cloud extraction: a MinerU API token from the [MinerU API management page](https://mineru.net/apiManage/docs) and network access to its endpoints
-- For offline `readable`: the optional PyMuPDF dependency, the matching original PDF, and retained adapted Content List evidence
-
-Core dependencies are installed automatically: `httpx`, `pydantic`, `pypdf`, `platformdirs`, and `python-dotenv`.
+- Portable delivery contains the main Markdown and its referenced resources under `images/`, using relative links.
+- Manifests, original-input snapshots, layout evidence and review reports live in a separate processing directory. Readers and basic ingestion do not require them.
+- Reviewed independent watermark, stamp, logo and decoration blocks can be excluded. Decisions bind to the input Markdown hash, image hash and exact occurrence lines. Uncertain or informative marks remain; valid image pixels are never erased.
+- Byte-identical images share a file while every useful occurrence and caption remains. Similar technical drawings are not merged using perceptual similarity.
+- `readable` defaults to a generic source edition and conservative automatic table conversion. `--edition reading` adds navigation and the full-page gallery.
+- The extra Doubao enrichment modules, `enhance`, `--enhance`, `--enhance-best-effort` and AI JSONL generation have been removed. Existing outputs and legacy local configuration are retained. MinerU's own OCR/VLM extraction remains.
+- gas-std-wiki is an optional adapter, not a mandatory consumer.
 
 ## Installation
 
-### 1. Clone and install
+Python 3.11+ is required. Follow the host's environment policy; use its existing Python.
 
-```bash
-git clone git@github.com:sherwood-shehy/MinerU-OCR.git
-cd MinerU-OCR
-python -m pip install -e .
+```sh
+python -m pip install -e ".[local]"       # Recommended: auto/local/cloud and PDF postprocessing
+python -m pip install -e .                # Minimal cloud-only runtime
+python -m pip install -e ".[readable]"    # Cloud plus PDF postprocessing
+python -m pip install -e ".[test,local]"  # Complete offline test suite
+python -m mineru_ocr.cli doctor
 ```
 
-Install test dependencies when developing:
+Core dependencies: httpx, pydantic, pypdf, platformdirs and python-dotenv. PDF postprocessing uses PyMuPDF. The optional `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family; pip resolves its transitive dependencies. No additional OCR engine, LLM service or second local table parser is required. Dependencies are installed into the existing authorized Python environment, not copied into the skill. `doctor` does not install anything; use `python -m mineru_ocr.cli` when the CLI executable is not on PATH.
 
-```bash
-python -m pip install -e ".[test]"
-```
+## Workflow
 
-Install the optional offline postprocessor when needed:
-
-```bash
-python -m pip install -e ".[readable]"
-# To run the complete suite, including PDF postprocessing tests:
-python -m pip install -e ".[test,readable]"
-```
-
-### 2. Configure the MinerU token
-
-Recommended interactive configuration:
-
-```bash
+```sh
 mineru-ocr config set-token
 mineru-ocr config show
+mineru-ocr preflight input.pdf
+mineru-ocr process input.pdf --output-dir delivery --work-dir processing
+mineru-ocr process input.pdf --engine local --output-dir delivery --work-dir processing
 ```
 
-The token is stored as plaintext in the platform-specific user configuration directory (for example, `%LOCALAPPDATA%\mineru-ocr\config.toml` on Windows). It is not written into this repository.
+`process --engine auto` may upload when cloud processing is selected; configure a token only when that branch is needed. `--engine local` fails rather than uploading an ineligible or rejected PDF. Office inputs use cloud. `submit`, `status` and `resume` remain cloud job operations. `MINERU_API_TOKEN` overrides the local plaintext user configuration; `config show` reports status only. Model/language/OCR flags apply to the cloud backend; the local backend always disables OCR and extracts tables.
 
-Alternatively, set an environment variable:
+With `--output-dir`, adapted PDF results receive source-page postprocessing automatically. Results without supported layout evidence receive portable publication with an explicit limitation. Use `--review-file`, `--name` and `--title` only with one input and `--output-dir`. For source-bound image review, first retain the raw result, run `inspect-images`, then use `readable` on that exact result; do not rerun extraction against an old review hash.
 
-```bash
-export MINERU_API_TOKEN="your-token"       # Linux/macOS
+Reuse completed OCR for local processing, without another upload or semantic-model call:
+
+```sh
+mineru-ocr publish input.pdf.mineru --output-dir delivery --work-dir processing
+mineru-ocr inspect-images input.pdf.mineru --work-dir processing
+mineru-ocr readable input.pdf.mineru --source-pdf input.pdf --review-file review.json --output-dir delivery --work-dir processing
+mineru-ocr validate "delivery/input（源材料）.md" --work-dir processing
 ```
 
-```powershell
-$env:MINERU_API_TOKEN = Read-Host "MinerU Token" -MaskInput
-```
+The review file is optional. `inspect-images` returns an inventory, a local Markdown gallery and an empty review template; it never guesses removals. Review images against source pages before adding decisions. See [postprocessing and review schemas](docs/readable-workflow.md) (Chinese) or the [Skill reference](.agents/skills/mineru-ocr/references/postprocessing.md) (English).
 
-Resolution order:
+`readable` requires the matching original PDF, recorded hash/page count and adapted MinerU Content List or native page evidence. Unsupported evidence remains available; use `publish` when precise postprocessing is unavailable. Native headings and the printed TOC are preserved; generated page links use physical PDF page numbers.
+
+## Delivery and processing records
 
 ```text
-MINERU_API_TOKEN environment variable > user config.toml
+delivery/
+  document.md
+  images/
+    <sha256>.png
+
+processing/
+  <record keyed by absolute delivery Markdown path>/
+    document.md
+    document.manifest.json
+    images/
+    evidence/
+    document.来源说明.md
+    document.定位与图片清单.md
+    document.校勘与缺口.md
 ```
 
-### 3. Install the Agent Skill
+The three reports are generated by `readable` and remain internal. `--work-dir` must be separate from, and not nested within or above, the delivery directory. If omitted it defaults to `mineru-ocr/deliveries` under the platform user cache. Use an explicit persistent directory for long-term provenance; commands return the actual record and report paths.
 
-The repository already contains the Skill at `.agents/skills/mineru-ocr`, so Codex discovers it when launched in this repository.
+Move the Markdown and referenced `images/` together. No sidecar is required for ordinary reading or basic ingestion. Multiple documents may share the directory: existing documents are never overwritten, and identical assets are reused. A document without resources needs no empty image directory.
 
-For global use, copy it into the user Skill directory:
+At its recorded location, `validate --work-dir processing` checks recorded hashes, evidence, reports, references and generated anchors. After relocation without records it reports `validation_scope: references`: existence and anchor checks only, not historical integrity verification. Automatic rebinding of relocated records is not implemented.
 
-```bash
-mkdir -p ~/.agents/skills
-cp -R .agents/skills/mineru-ocr ~/.agents/skills/mineru-ocr
+Source-page checks are ordinary links such as `[Page 12](images/<hash>.png)`. Figure embeds use `![Figure 1](images/<hash>.png)`. HTML tables and math still depend on reader support.
+
+## Fidelity boundaries
+
+Simple rectangular tables with explicit or source-reviewed headers can become GFM pipe tables after cell round-trip checks. Merged cells, multiple headers and rich content retain HTML. Use `--table-format html` to retain every HTML table.
+
+Reviewed text corrections require exact before/after strings, expected counts, physical PDF pages and reasons. Layout-backed running-header cleanup and heading normalization protect tables, display math and fenced code. Unknown positions stay unknown.
+
+Image removal requires the input and image hashes, explicit lines, an invalid-block kind, `independent: true` and a reason. Repetition, size or page position alone is insufficient. Informative approval/version/source marks remain. Original files and complete source-page evidence are retained. Deduplication compares bytes, not inferred meaning.
+
+Structural validation is not a measured OCR accuracy score. Inspect representative formulas, complex/continued tables, figures with units and appendix boundaries.
+
+## Jobs and limits
+
+```sh
+mineru-ocr submit input.pdf
+mineru-ocr status JOB_ID
+mineru-ocr resume JOB_ID
 ```
 
-PowerShell:
+The client plans up to 200 pages per range and physically splits PDFs above its 200 MB threshold, targeting 190 MB fragments. These are configured client limits, not promises about current cloud quotas. Defaults: vlm model, ch language, OCR/tables/formulas enabled. Small Office inputs support explicit `--page-ranges`; oversized Office inputs need PDF export.
 
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.agents\skills" | Out-Null
-Copy-Item -Recurse -Force ".agents\skills\mineru-ocr" "$HOME\.agents\skills\mineru-ocr"
+Without `process --output-dir`, cloud processing returns a raw `.mineru` bundle; local processing returns an immutable raw bundle under `--work-dir/native/<run-id>` (default: the processing cache). Rejected local candidates and their quality reports remain there for diagnosis. Retain timed-out cloud job IDs and resume; do not resubmit unnecessarily. Use `clean JOB_ID` only for intentionally discarded cloud job data.
+
+## Development and migration
+
+Version 0.4.1 passed **110 offline tests**, including all-page routing, no-upload local mode, dependency/runtime failures, native publication, blank-page preservation, numeric/symbol/script-formatting checks and independent merged-cell rejection. See the [0.4.1 validation record](docs/v0.4.1-validation.md).
+
+```sh
+python -m pytest
 ```
 
-Restart Codex or open a new thread, then invoke `$mineru-ocr` explicitly or describe a matching OCR task.
+Version 0.4.0 passed **93 offline tests**. Reusing the 108-page GB 6932—2015 OCR produced one Markdown and 131 referenced images, with 8 GFM tables and 48 retained HTML tables. Independent GFM rendering preserved all 93 cells across the 8 conversions; relocation without records passed reference checks. See the [validation record](docs/v0.4.0-validation.md) (Chinese).
 
-## CLI Usage
+Skill source: [.agents/skills/mineru-ocr](.agents/skills/mineru-ocr/SKILL.md). Deterministic rules belong in code; the skill coordinates source review and delivery. Embedded document instructions are treated as source content.
 
-### Complete processing flow
-
-```bash
-mineru-ocr process "/path/to/document.pdf"
-```
-
-Common options:
-
-```bash
-mineru-ocr process document.pdf \
-  --model vlm \
-  --language ch \
-  --timeout 1800
-```
-
-Defaults are VLM, OCR enabled, Chinese/English recognition, table recognition enabled, and formula recognition enabled.
-
-### Asynchronous and resumable flow
-
-```bash
-# Submit and keep the returned local job_id
-mineru-ocr submit document.pdf
-
-# Refresh progress; completed jobs are downloaded and merged automatically
-mineru-ocr status <job-id>
-
-# Retry failed parts only
-mineru-ocr resume <job-id> --timeout 1800
-
-# Discard an unfinished job cache
-mineru-ocr clean <job-id>
-```
-
-### Token management
-
-```bash
-mineru-ocr config show
-mineru-ocr config set-token
-mineru-ocr config clear-token
-```
-
-The `show` command reports only the configuration path and selected source; it never prints the token.
-
-### Offline postprocessing for reading and Wiki sources
-
-Use a completed `.mineru` result directory or a published Markdown with its manifest. The source PDF hash and page count must match its provenance. These commands do not repeat OCR or require a service token.
-
-```bash
-# General reading edition: navigation, source-page gallery, original HTML tables
-mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/reading --name report-reading
-
-# General Wiki source edition: body plus separate records, selective Markdown tables
-mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/wiki --name report-source --edition source --table-format auto
-
-# gas-std-wiki defaults, target rule fingerprints and source-checked corrections
-mineru-ocr readable report.pdf.mineru --source-pdf report.pdf --output-dir outputs/gas-wiki --name report-source --profile gas-std-wiki --target-project /path/to/gas-std-wiki --source-id GB-EXAMPLE --review-file review.json
-
-mineru-ocr validate outputs/gas-wiki/report-source.md
-```
-
-The last example is an alternative using a matching target checkout and review file. `--target-project` reads nine current rule files without modifying that project. Omit `--review-file` when no source-checked corrections or header confirmations are available. Explicit `--edition` and `--table-format` options override profile defaults.
-
-| Profile | Default edition | Default table format |
-|---|---|---|
-| `generic` | `reading` | `html` |
-| `gas-std-wiki` | `source` | `auto` |
-
-Markdown tables suit simple two-dimensional data. GFM cannot express merged cells or multiple header rows, so complex tables remain HTML. When MinerU uses only `<td>`, the first row is not assumed to be a header: source confirmation is required. See the [table and review contract](.agents/skills/mineru-ocr/references/postprocessing.md) and [worked review configuration](docs/examples/gb6932-2015-wiki-review.json). Review records are tied to a particular source hash and cannot be reused blindly on another PDF.
-
-## Processing Rules
-
-### PDFs up to 200 MB
-
-- The source PDF is not physically split.
-- PDFs up to 200 pages are uploaded once.
-- Longer PDFs are represented as continuous ranges such as `1-200` and `201-364`.
-- The complete source is uploaded for each range, and MinerU performs server-side page selection.
-
-### PDFs over 200 MB
-
-- Local physical splitting is enabled.
-- Each part contains at most 200 pages.
-- Parts above 190 MB are recursively divided until upload-safe.
-- The original PDF is never deleted or modified.
-
-### Office files
-
-Small DOC/DOCX, PPT/PPTX, and XLS/XLSX files are submitted directly. The project intentionally does not depend on LibreOffice. If an Office document exceeds the service limits, export it to PDF before processing.
-
-## Output
-
-The core CLI builds a merge bundle beside the source while the composite job completes:
-
-```text
-document.pdf.mineru/
-├── full.md
-├── assets/
-│   ├── part-0001/
-│   └── part-0002/
-└── manifest.json
-```
-
-The offline `publish` command implements publication into user-selected directories. `process --output-dir` invokes it automatically:
-
-- publish `<source-stem>.md` directly in the selected directory;
-- avoid overwrites using names such as `<source-stem> (1).md`;
-- consolidate resources into a shared `assets/` directory and rewrite references;
-- publish `<source-stem>.manifest.json` with document/asset IDs, hashes and source locations;
-- retain upstream layout JSON in `evidence/` and use content hashes for shared asset filenames;
-- validate references and retain the original `.mineru` result package;
-- never delete or modify the original source document.
-
-```bash
-mineru-ocr process report.pdf --output-dir knowledge
-mineru-ocr process report.pdf --output-dir knowledge --enhance
-mineru-ocr publish report.pdf.mineru --output-dir knowledge
-mineru-ocr validate knowledge/report.md
-```
-
-Publish source materials first, then enhance the published Markdown. `publish` does not migrate old AI JSONL files; earlier outputs remain in the source package. Re-running `enhance` atomically replaces only that Markdown's derived JSONL. See the [knowledge-material contract](.agents/skills/mineru-ocr/references/knowledge-materials.md) for IDs, precise/range/unknown locators, visual evidence, review status and ingestion rules.
-
-`readable` publishes a larger, self-contained local file family:
-
-```text
-report-source.md
-report-source.manifest.json
-report-source.来源说明.md
-report-source.定位与图片清单.md
-report-source.校勘与缺口.md
-images/
-evidence/
-```
-
-The three companion files record provenance and pending metadata; version-bound clause/image locations; and exact corrections, table decisions and unresolved gaps. Evidence includes the byte-preserved input PDF, OCR Markdown, manifest and local referenced resources in a ZIP, plus a processing audit. Keep the whole family and its referenced resources together when moving it. `publish --image-dir images` also selects `images/` for ordinary publication.
-
-## AI Enhancement
-
-> The AI enhancement layer is a **separate, optional** post-processing step. It does not affect the core OCR pipeline and can be enabled per-run via the `--enhance` flag.
-
-After MinerU extracts the raw Markdown, the optional AI enhancement layer creates one retrieval-ready JSONL file. The original Markdown remains the evidence layer and is not modified.
-
-### Design Background and Considerations
-
-**Why AI enhancement?** MinerU produces human-readable Markdown that preserves the document's visual layout, tables, and images. This is excellent for reading, but AI agents consuming the output benefit from explicit metadata — knowing what a chart describes, which entities appear in each section, and how sections relate to each other — without having to re-read the entire document.
-
-**Single-model approach.** The configured Doubao model handles both images and text. Each text call receives one bounded segment; full-document context and relationships across segments are not guaranteed.
-
-**Non-destructive by design.** The original Markdown is never touched. The AI output is written as a sibling `<source>.ai.jsonl` file. If OCR has already produced the Markdown, run `mineru-ocr enhance <markdown-or-result-dir>` directly; OCR is not repeated.
-
-**Chunked text analysis.** Long documents are analyzed in section-aware chunks instead of being silently truncated. Coverage metadata is stored in the first JSONL metadata record.
-
-**Per-image error tolerance.** A single corrupted or unrecognisable image does not block enhancement of the remaining images or the text analysis. Each image is processed independently, and errors are recorded in the output JSON per image.
-
-**Evidence and interpretation.** Visible text and dimension strings remain separate from contextual interpretations. Derived records carry model/prompt versions, source identity and review status. Native SVGs remain referenced but are marked unsupported by the current vision transport. Compatible legacy Content List V1 provides page/bbox locators; other cases explicitly retain range or unknown precision.
-
-**Credential isolation.** The Doubao API key is stored only in the local user configuration via `mineru-ocr config set-doubao-key`. It is not stored in repository files, generated Markdown, manifests, examples, or responses.
-
-### Architecture
-
-```text
-             MinerU output
-         full.md + assets/
-                │
-                ▼
-  ┌─────────────────────────────┐
-  │     Doubao-Seed-2.0-lite    │
-  │                             │
-  │  1. analyze_text(full.md)   │
-  │     → sections, entities,   │
-  │       references, tags      │
-  │                             │
-  │  2. analyze_image(each img) │
-  │     → type, summary,        │
-  │       elements, findings,   │
-  │       keywords              │
-  └─────────────────────────────┘
-                │
-                ▼
-       <source>.ai.jsonl
-```
-
-### Output Format
-
-The enhancement layer writes one AI consumption file beside the source Markdown:
-
-| File | Purpose |
-| ---- | ------- |
-| `<source>.ai.jsonl` | One JSON object per metadata, text, or image chunk for retrieval and agent workflows. It includes normalized tables, image interpretations, image context, section paths, page ranges, and coverage metadata. |
-
-### Usage
-
-```bash
-# One-shot: process and enhance in one step
-mineru-ocr process report.pdf --enhance
-
-# Re-run enhancement on an existing result
-mineru-ocr enhance report.pdf.mineru/
-
-# Or enhance a published Markdown file
-mineru-ocr enhance report.md
-```
-
-### Configuration
-
-Configure Doubao locally before using `--enhance`:
-
-```bash
-mineru-ocr config set-doubao-key
-# Enter: 你的豆包apikey
-```
-
-Defaults are `https://ark.cn-beijing.volces.com/api/coding/v3` and `doubao-seed-2.0-lite`. `mineru-ocr config show` reports whether the key is configured without printing it. When the key is missing, the `--enhance` flag and `enhance` subcommand produce a clear error message.
-
-### Current Scope
-
-The enhancement layer focuses on single-document metadata extraction. It does **not** currently include:
-
-- Cross-document knowledge graph construction
-- Vector embedding or RAG pipeline integration
-- Web UI or Dashboard
-- Interactive Q&A over the document
-- Agentic retrieval workflows
-
-These capabilities are intentionally left to Knowhere and other specialised tools in the ecosystem.
-
-## Reliability and Security
-
-- API tokens are never included in job manifests or public tool responses.
-- Signed upload and result URLs are removed from public job summaries.
-- Result downloads require HTTPS.
-- ZIP extraction rejects absolute paths, `..` traversal, and symbolic links.
-- Writes use temporary files/directories and atomic replacement where possible.
-- Failed composite jobs remain in the per-user cache for recovery.
-
-## Testing
-
-Run the offline suite:
-
-```bash
-python -m pytest --basetemp .test-tmp -p no:cacheprovider
-```
-
-Version 0.3.0 passes 92 offline tests, including selective table conversion, source-bound review files, separate clause namespaces, immutable input snapshots, companion reports and generated-anchor validation. The 108-page GB 6932 sample retained all 56 tables; 8 converted tables also passed independent GFM rendering checks.
-
-Version 0.2.0 passed 68 offline tests on Python 3.12.2. The tests cover:
-
-- 199/200/201/400-page planning boundaries;
-- repeated full-file uploads with independent page ranges;
-- simulated oversized-PDF physical splitting;
-- Office size rejection;
-- Markdown merge order and asset collision isolation;
-- ZIP traversal protection;
-- API request shape;
-- credential precedence and cleanup;
-- offline publication, filename collisions, missing resources, hash verification, and copy retries;
-- stable IDs, source-page mapping, repeated references, and cross-part label isolation;
-- table and numeric fidelity, bounded text chunks, current-document image selection, and published-output enhancement.
-
-On restricted Windows environments, keep the explicit `--basetemp` option because the default user temporary directory may be inaccessible.
-
-## Real-World Validation
-
-For 0.3.0, the existing 108-page GB 6932—2015 OCR bundle was processed offline into a Wiki source edition. It retained all 56 tables (8 Markdown, 48 HTML), 42 PDF-derived figure crops, 89 referenced source-page images and 497 chapter/appendix/clause locators. All tables and 6 display-math blocks have source-page links. Original-input ZIP integrity, input byte hashes and final resource/companion/anchor validation passed. An independent Marked GFM render preserved every converted table's row/cell text.
-
-The sample has 14 recorded corrections and two clause-to-PDF mappings left unknown (7.3.3 and 7.7.5). Other pages remain in the original PDF snapshot. Full OCR completeness, every numeric cell, visual technical meaning, meaningful font weight, current standard status and human acceptance were not certified. The sample demonstrates source preparation; it did not automatically ingest material into the target Wiki.
-
-For 0.2.0, a separate offline acceptance run published an existing 1,545,149-byte Chinese Markdown document with 17 valid resources. Test-double AI responses exercised the enhancement pipeline, producing 251 JSONL records and 18 model input segments with unique IDs. Source content was unchanged apart from published resource targets, and enhancement left the published Markdown unchanged. This verifies local processing, not live OCR or vision-model accuracy.
-
-The workflow has been exercised on a 364-page Chinese technical standard. It completed as two logical ranges (`1-200`, `201-364`) and produced an ordered merged document with 156 headings, 327 HTML tables, and 12 image references. A comparison against the official CLI output showed approximately 99.35% visible-text similarity; the custom merge produced substantially more compact markup for one pathological table section.
-
-## Project Layout
-
-```text
-.agents/skills/mineru-ocr/   Agent Skill and MinerU API reference
-src/mineru_ocr/              CLI, API client, planner, storage, and merge logic
-tests/                       Offline unit tests
-pyproject.toml               Package metadata, dependencies, and command entry points
-```
-
-## Limitations
-
-- OCR is cloud-based, not offline.
-- Service limits and response formats may change; consult the current [MinerU API documentation](https://mineru.net/apiManage/docs).
-- Large Office documents are not split automatically.
-- Physical PDF splitting cannot process a single page that remains above the safe upload threshold.
-- Cross-part semantic repair (for example, reconstructing a table split exactly at a page-range boundary) is intentionally not attempted.
-- Offline postprocessing requires a matching PDF and adapted legacy Content List evidence. Unsupported or ambiguous locations remain unknown; rotated-page figure crops are not inferred.
-- Mixed HTML/Markdown tables and formulas require a compatible reader. Formatting invariants, successful image decoding and valid links do not establish OCR accuracy or human review.
-
-## Contributing
-
-Issues and focused pull requests are welcome. Please include tests for behavior changes and run the full offline suite before submitting.
-
-## License
-
-No project license has been declared yet. MinerU and its API are governed by their respective upstream terms and policies.
-
-## References
-
-- [MinerU](https://mineru.net/)
-- [MinerU API documentation](https://mineru.net/apiManage/docs)
-- [MinerU open-source repository](https://github.com/opendatalab/MinerU)
-- [MinerU Ecosystem and official CLI](https://github.com/opendatalab/MinerU-Ecosystem)
+0.3.x migration: manifests and reports are no longer public companions; `publish --image-dir` is retired in favor of fixed `images/`; extra AI enrichment commands are retired. Existing artifacts are not automatically deleted or migrated. Republish old bundles for the new package structure. See [CHANGELOG](CHANGELOG.md).

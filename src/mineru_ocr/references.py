@@ -1,4 +1,4 @@
-"""Shared Markdown/HTML resource references, used by merge, publish and enhance."""
+"""Shared Markdown/HTML resource references, used by merge, publication and image review."""
 from __future__ import annotations
 
 import re

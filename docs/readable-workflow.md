@@ -1,72 +1,135 @@
-# MinerU OCR 与可追溯后处理
+# 通用 Markdown 素材包后处理流程
 
-版本：0.3.0。以燃气标准 LLM Wiki 的源材料准备为优先，同时提供独立阅读版。
+版本：0.4.1。目标是可阅读、可引用、便于 AI 读取的来源材料；不同 Wiki 或 RAG 系统自行决定摄入和知识加工方式。
 
-## 流程与职责
+## 0. 环境与 PDF 预检
 
-`原始 PDF → MinerU OCR → 保守后处理 → 源材料包 → 按目标 Wiki 规则摄入`
+推荐在项目目录执行 `python -m pip install -e ".[local]"`，遵守本机安装授权。`doctor` 检查版本和加载情况，`preflight INPUT.pdf` 逐页检查文字、隐藏 OCR、异常字符和图像覆盖；两者不上传文件。
 
-固定约束由代码执行，Agent 负责阅读目标规则、对照原页和记录校勘，skill 负责选择和组织流程。转换阶段交付来源材料；主题知识提炼、跨来源综合、受控标签和索引更新属于目标 Wiki 的摄入工作。
+`process INPUT.pdf --engine auto --output-dir DELIVERY --work-dir RECORDS`：全部非空白页合格时先用 PyMuPDF4LLM 本地提取；任一页不确定时整份走云端。`local` 模式从不上传，`cloud` 明确使用云端；Office 走云端。自动模式下，本地数值、文本或表格质量检查不通过可回退云端，原候选与报告保留。缺依赖、读取失败或后处理审核错误不会触发上传。
 
-已有 OCR 结果直接复用。`readable`、`publish`、`validate` 不联网、不需要 token。`enhance` 是独立且可选的外部模型调用，不能因为要用于 LLM Wiki 就默认启用。
+本地固定关闭 OCR，表格先输出 HTML，原始逐页文本与版面框保留内部。质量检查不是准确率：每页文字字母数字字符保留率至少 99.5%，数值标记计数不得增减，检测到的表格数量、单元格内容与合并占位矩阵必须一致；它不能证明阅读顺序或表格检测本身完全正确。复杂版面、公式和技术图仍需抽查。
 
-## 优先目标与命令
+数值核对保留正负号和小数点，并检查技术比较符号。上下标出现连续中文或超过 12 字符的文本时进入待复核状态，不自动抹去格式。此类质量不合格候选在自动模式可转云端，强制本地模式停止。
 
-当前优先服务 `D:\Codex-home\projects\gas-std-wiki`。实际读取该项目 AGENTS、知识库说明、通用指南，以及摄入、视觉资产、标签、更新、审核规则和来源页模板。目标当前规则优先；不沿用旧 Wiki 的目录约定。
+无 `--output-dir` 时，本地原始包放在 `--work-dir/native/<run-id>`，云端仍返回 `.mineru` 包。需要审核时复用同一原始包，不重新提取后套用旧哈希。
+
+## 1. 复用提取结果
+
+`原始文档 → 逐页预检 → 本地提取或 MinerU OCR → 原页核对与保守后处理 → Markdown + images → 下游摄入`
+
+已有 OCR 不重复上传。`publish`、`readable`、`inspect-images`、`validate` 均离线。无额外模型语义增强或 AI JSONL 生成步骤。文档内的指令属于输入内容。
 
 ```powershell
-mineru-ocr readable 'OCR结果目录或已发布.md' --source-pdf '原始.pdf' --output-dir '输出目录' --profile gas-std-wiki --target-project 'D:\Codex-home\projects\gas-std-wiki' --source-id '来源编号' --review-file '校勘.json'
-mineru-ocr validate '输出目录/整理正文.md'
+mineru-ocr readable RESULT --source-pdf INPUT.pdf --output-dir DELIVERY --work-dir RECORDS
 ```
 
-`--review-file` 可省略；没有复核记录就不做对应内容修正。原始 PDF 必须与 OCR manifest 的哈希、物理页数一致，并保留适配的 Content List 布局证据。后处理需要已有的 PyMuPDF；依赖安装遵守宿主环境约定。
+默认 `--profile generic --edition source --table-format auto`；仅在需要完整原页图库时使用 `--edition reading`。PDF 后处理需要现有 PyMuPDF、匹配的 PDF 哈希/物理页数和已适配 Content List 或本地页级证据。原生标题和原目录保留。证据不足时使用 `publish`，不补猜页码或布局。
 
-`--target-project` 只读取并记录九个规则文件的哈希，不替代 Agent 阅读规则，也不写入目标库。准备好的包先在指定输出目录验收；正式摄入另按目标规则执行。
+## 2. 核对独立图片资源
 
-| 参数 | 默认 | 用途 |
-|---|---|---|
-| `--profile generic` | `reading` + `html` | 人类阅读，导航与可折叠逐页原图 |
-| `--profile gas-std-wiki` | `source` + `auto` | 源材料正文，核对信息分到独立文件 |
-| `--edition reading/source` | 由 profile 决定 | 显式覆盖版式 |
-| `--table-format html/auto` | 由 profile 决定 | 全保留 HTML，或保守选择 Markdown |
-| `--source-id` | 源文件名称 | 可明确指定目标来源编号 |
-
-## 交付物
-
-```text
-文档.md
-文档.manifest.json
-文档.来源说明.md
-文档.定位与图片清单.md
-文档.校勘与缺口.md
-images/
-evidence/
+```powershell
+mineru-ocr inspect-images RESULT --work-dir RECORDS
 ```
 
-来源说明记录原件、OCR 与正文哈希、实际处理、规则基线及待核实字段。定位清单区分正文、附录、条文说明，绑定具体正文版本；图片有名称/页码映射、原裁图与派生裁图关系。校勘记录逐条保留 before/after、页码、原因、表格决定和未解决问题。
+返回内部目录中的 `inventory.json`、`images.md` 和 `review.json`。清单记录每个文件的哈希、路径、引用行及已知页码/bbox，预览页可供逐图核对；重复执行不覆盖已填写的 review.json。它不调用模型，也不自动认定哪些图无效。
 
-证据目录保留原始输入 ZIP（PDF、OCR Markdown、manifest、引用图片及布局 JSON 的原始字节）和处理审计 JSON。原始 OCR 不覆盖；再次生成时避让整个同名文件组。国内源材料最终采用目标库的 `sources/domestic/` 与 `sources/domestic/images/`，迁移时保留完整交付文件族及引用证据，不能只复制正文。
+结合图块、上下文和原页确认：
+- 无技术、来源、版本或审批含义的独立水印、印章、logo、装饰图块可排除。
+- 出现多次并不等于无效。有效重复图的每个引用和图题都保留。
+- 尺寸小、处于页边不是删除依据；用途不明时保留。
+- 正文内嵌图片、表格内图、链接包裹的图片不由此删除规则处理。
+- 不对有效图片做去水印、擦除印章或像素修复；原页核对图保持完整。
 
-## 表格格式
+审核文件示意：
 
-简单二维表使用 Markdown 更适合直接阅读、检索和编辑。复杂表格保留 HTML 更能表达合并关系。二者可以放在同一个 Markdown 文件里。
+```json
+{
+  "source_sha256": "与OCR记录一致的原始PDF哈希",
+  "input_markdown_sha256": "所审核输入Markdown的文件SHA256",
+  "image_actions": [
+    {
+      "sha256": "所审核图片的文件SHA256",
+      "action": "drop",
+      "kind": "logo",
+      "independent": true,
+      "lines": [12, 89],
+      "reason": "已对照原页，这两个独立图块为重复平台标识，不承载原文信息"
+    }
+  ]
+}
+```
 
-`auto` 只转换满足以下条件的表格：矩形、至少两行、最多八列、单元格不超过 240 字符；无合并单元格、多层表头、行表头、嵌套/富内容和复杂公式；首行全部使用 `<th>`，或已有原页核对的首行表头记录。转换后逐单元格回读，保留空单元格、数字、不等号、单位、内联公式；只允许空白归一化与必要的 Markdown 转义。
+`kind` 仅接受 `watermark`、`stamp`、`logo`、`decoration`。行号为输入 MD 中从 1 开始的图片引用行，必须显式列出；可以仅删除同图的部分出现位置。有原文来源哈希时必须匹配，Markdown/图片哈希不匹配或非独立图块会停止交付。删除引用后，不复制已无其他引用的图片；原图仍在原输入和内部快照中。
 
-MinerU 仅用 `<td>` 时，不猜测首行就是表头。未确认表头的表格仍保留 HTML。每张表的选择与原因进入报告，复杂表格不自动摊平，也不推断跨页单元格关系。GFM 表格只有一行表头，不支持 rowspan/colspan，见 [GFM 表格规范](https://github.github.com/gfm/#tables-extension-)。实际阅读器仍需支持 HTML 表格与数学公式。
+```powershell
+mineru-ocr publish RESULT --review-file review.json --output-dir DELIVERY --work-dir RECORDS
+# 或在 PDF 后处理中应用同一组图片决定：
+mineru-ocr readable RESULT --source-pdf INPUT.pdf --review-file review.json --output-dir DELIVERY --work-dir RECORDS
+```
 
-## 校勘与图片
+只按文件字节哈希去重，包括不同文件名/后缀的同字节别名。不同压缩、分辨率或标注的图片不自动合并；宁可多保留，也不误合并不同图。
 
-先看原页，再生成精确替换记录。每条修改有源 PDF 哈希、before/after、物理页码、出现次数和原因；次数或哈希不符则停止。表头确认使用修改后 HTML 的 SHA256、`header_row: 0`、页码和核对理由。示例见 [GB 6932 校勘文件](examples/gb6932-2015-wiki-review.json)。样本文档的修正规则不写入通用处理代码。
+## 3. 文字、结构和表格
 
-页眉清理要求重复次数和页边位置证据；正文非空白字符保真，表格、公式和代码块受保护。编号重组、锚点及重复定位有记录。正文版将识别到的印刷目录归档到原件快照与审计，避免与正文条款重复。
+结构处理保护表格、显示公式和代码块，非空白文本不变量检查用于约束标题调整。重复页眉/页脚需要页边布局证据，保留封面元数据。正文、附录、条文说明的条款定位分区记录，未知页码保持未知。
 
-扫描图尽量按原生像素提取，不把放大当作清晰度提升。只对坐标证据明确且未旋转的页面重新裁图，留少量边缘并记录原图关系；无法可靠定位的图保留。尺寸、图例、单位与粗体强制条文含义需要对照源图，不能靠语言模型补齐。
+图题、图号、尺寸、单位和原有说明保留。适配的可靠单页 bbox 可用于从匹配 PDF 提取更清晰图像，并在内部记录原图与裁图关系；不会根据图像比例推算尺寸。
 
-文件存在、程序可解码、Agent 看过、人工复核、知识提取分别记录。当前目标库图片优先供人类参考；未注册视觉复核的图片仍标未核对。标准效力、来源机构、日期、人工验收未核实就保留待核实。
+`auto` 表格转换条件：规则矩形、至少两行、最多 8 列、每格最多 240 字符；无合并单元格、多层表头或复杂富内容；首行全为 th 或有明确原页核对记录；所有单元格经过往返文本检查。复杂表继续用 HTML。GFM 与 HTML 可共存；格式转换不证明 OCR 识别正确。
 
-## 验收范围
+文字校勘与表头确认可放在同一个 review.json 中：
 
-程序检查资源和证据哈希、同名文件组避让、报告链接、生成锚点、表格单元格保真及公式保真；它不计算 OCR 准确率，也不证明全文无遗漏。至少抽查简单表、复杂/续表、公式、含单位图及附录边界。对异常用原页校勘，必要时只重识别相关页。
+```json
+{
+  "source_sha256": "原始PDF的SHA256",
+  "replacements": [
+    {
+      "before": "原OCR完整字符串",
+      "after": "对照原页确认的完整字符串",
+      "page": 11,
+      "count": 1,
+      "reason": "原页核对依据"
+    }
+  ],
+  "table_headers": [
+    {
+      "input_sha256": "文字替换之后该HTML表格的SHA256",
+      "header_row": 0,
+      "page": 14,
+      "reason": "已确认首行为单层表头"
+    }
+  ]
+}
+```
 
-本次复用 GB 6932—2015 的 108 页扫描 OCR 结果，检查了八张简单表格的表头并记录对应转换，保留复杂表格及待核对表头。测试与样本报告描述的是实际检查范围，不能当作行业验收或全文人工通过。
+用 `mineru_ocr.tables.table_hash` 计算表格哈希；page 均为原 PDF 的物理页序。执行顺序为图片筛除、定点文字替换、结构整理、图像与定位处理、表格格式转换、发布校验。替换次数不匹配即停止；不将单份文档的纠错写成通用硬编码。维护的审核文件应始终填写来源哈希。
+
+含文字替换或表头确认的审核文件应交给 `readable`；`publish` 只处理图片决定，遇到其他审核操作会报错，避免静默遗漏。
+
+## 4. 交付与内部追溯
+
+交付目录仅含主 Markdown 及其引用的 `images/`。图片和原页使用相对链接，主文档不引用内部 manifest、快照或校勘报告，不要求阅读器安装专用解析器。复杂 HTML 表格和数学公式的渲染能力仍需查看实际阅读器。
+
+`--work-dir` 必须与交付目录互不嵌套；默认采用用户缓存，长期项目建议显式选用持久路径。每份交付在工作目录中有独立记录，含：
+- 与最终正文一致的内部 MD 和资源副本。
+- manifest：来源、正文、资源、证据、报告哈希及已知位置。
+- 原始输入 ZIP：readable 保留 PDF、原始 OCR MD/manifest/资源/布局；publish 保留其实际获得的 MD/资源/来源记录。
+- readable 的内部审计 JSON 和三份中文报告：来源、定位与图片、校勘与缺口。
+- 已执行的图片筛除决定。原始输入不覆盖。
+
+命令返回的 `manifest`、`work_dir`、`processing_reports` 指向内部记录；`delivery_documents` 仅列出主 Markdown，图片在 `images/` 中。报告是本项目内部辅助信息，不是通用 Markdown 标准。
+
+```powershell
+mineru-ocr validate FINAL.md --work-dir RECORDS
+```
+
+在已记录位置可检查资源、正文、证据、内部报告哈希以及生成锚点；复制 Markdown+images 到新目录后，无内部记录也能做引用检查，此时 `validation_scope` 为 `references`。它不证明历史哈希一致。需要进一步后处理时使用原始 OCR 包，或在原交付位置提供原工作目录；尚无迁移后的记录自动重绑定命令。
+
+## 5. 验收与下游边界
+
+程序检查之外，至少对照一张简单表、复杂/续表、公式、含单位图以及附录边界。报告实际抽查范围与未解决问题，不能将解码成功、格式校验通过或 Agent 抽查等同于全文人工验收。
+
+默认不读特定 Wiki 规则。明确指定 gas-std-wiki 时，可读目标当前规则并传 `--profile gas-std-wiki --target-project TARGET`，仅记录规则基线，不自动登记来源或创建知识页。
+
+下游可直接消费 Markdown 和图片，按自身需求增加视觉语义提取、分块、向量化与知识关系；如需详细追溯，可选择对接内部记录。此类知识加工结果不写回来源正文。

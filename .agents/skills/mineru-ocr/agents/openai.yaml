@@ -1,4 +1,4 @@
 interface:
   display_name: "MinerU OCR"
-  short_description: "Prepare readable and Wiki-ready OCR sources with audit records"
-  default_prompt: "Use $mineru-ocr to prepare this document as readable or Wiki source Markdown, with conservative table conversion, validated images and source-page references, recording corrections and unresolved issues. Add visual AI only when requested."
+  short_description: "Local PDF preflight, cloud OCR and faithful portable Markdown"
+  default_prompt: "Use $mineru-ocr to preflight this PDF, select local extraction or authorized cloud OCR, and produce faithful Markdown with relative images, conservative tables and source-page links; preserve review evidence outside delivery and report actual checks and gaps."

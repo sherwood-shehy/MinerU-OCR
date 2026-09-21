@@ -32,7 +32,7 @@ def test_publish_flattens_links_and_preserves_document_identity(tmp_path):
     assert a["doc_id"] == b["doc_id"]
     assert a["assets"][0]["asset_id"] == b["assets"][0]["asset_id"]
     assert len(a["assets"]) == 1
-    assert len(list((out / "assets").iterdir())) == 1
+    assert len(list((out / "images").iterdir())) == 1
     assert "part-0001" not in Path(first["markdown"]).read_text(encoding="utf-8")
     assert validate_output(first["markdown"])["valid"]
 
@@ -101,7 +101,7 @@ def test_resource_copy_failure_can_be_retried(tmp_path, monkeypatch):
     from mineru_ocr.publish import publish_output
     source = make_bundle(tmp_path)
     original = shutil.copyfileobj
-    def broken_copy(src, dst):
+    def broken_copy(src, dst, *args):
         dst.write(b'partial')
         raise OSError('simulated disk failure')
     monkeypatch.setattr(shutil, 'copyfileobj', broken_copy)
@@ -131,19 +131,12 @@ def test_offline_publish_does_not_load_environment_credentials(tmp_path, monkeyp
     assert cli.main(['publish', str(make_bundle(tmp_path)), '--output-dir', str(tmp_path / 'out')]) == 0
 
 
-def test_process_publishes_before_enhancing_final_references(tmp_path, monkeypatch, capsys):
-    from mineru_ocr import enhancer
-    from test_enhancer import FakeEnhancementClient
+def test_process_publishes_portable_materials(tmp_path, monkeypatch, capsys):
     source = make_bundle(tmp_path)
     monkeypatch.setattr(cli, 'load_dotenv', lambda: None)
     monkeypatch.setattr(cli, 'process_files', lambda *args: [{'state': 'done', 'result_dir': str(source)}])
-    enhance = enhancer.enhance_output
-    monkeypatch.setattr(enhancer, 'enhance_output', lambda path: enhance(path, client=FakeEnhancementClient()))
-    assert cli.main(['process', 'unused.pdf', '--output-dir', str(tmp_path / 'out'), '--enhance']) == 0
+    assert cli.main(['process', 'unused.pdf', '--engine', 'cloud', '--output-dir', str(tmp_path / 'out')]) == 0
     job = json.loads(capsys.readouterr().out)[0]
-    ai = Path(job['ai_enhancement']['ai_jsonl'])
-    assert ai.parent == tmp_path / 'out'
-    rows = [json.loads(line) for line in ai.read_text(encoding='utf-8').splitlines()]
-    image = next(row for row in rows if row['type'] == 'image')
-    assert (ai.parent / image['source_ref']).is_file()
-    assert 'part-0001' not in image['source_ref']
+    assert Path(job['markdown']).is_file()
+    assert {p.name for p in (tmp_path / 'out').iterdir()} == {'技术标准.v1.md', 'images'}
+    assert not Path(job['manifest']).is_relative_to(tmp_path / 'out')

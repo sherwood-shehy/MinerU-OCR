@@ -25,10 +25,13 @@ def manifest_path(markdown: Path) -> Path:
     return markdown.with_name(markdown.stem + '.manifest.json')
 
 
-def read_manifest(markdown: Path) -> dict:
+def read_manifest(markdown: Path, work_dir: Path | None = None, *, discover: bool = True) -> dict:
     path = manifest_path(markdown)
     if not path.exists() and markdown.name == 'full.md':
         path = markdown.parent / 'manifest.json'
+    if not path.exists() and discover:
+        from .records import internal_markdown
+        path = manifest_path(internal_markdown(markdown, work_dir))
     if not path.exists():
         return {}
     try:

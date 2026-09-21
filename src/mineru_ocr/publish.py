@@ -6,12 +6,155 @@ import hashlib
 import json
 import re
 import shutil
+import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from .errors import MinerUOCRError
 from .provenance import build_manifest, digest_file, manifest_path, read_manifest
 from .references import local_resource, references, rewrite_references
+from .records import check_work_dir, internal_markdown, records_dir
+
+
+def _recorded_source(markdown: Path, work_dir: Path | None = None) -> Path:
+    if manifest_path(markdown).exists() or (markdown.name == 'full.md' and (markdown.parent / 'manifest.json').exists()):
+        return markdown
+    internal = internal_markdown(markdown, work_dir)
+    if internal.parent.exists() and (not internal.is_file() or not manifest_path(internal).is_file()):
+        raise MinerUOCRError('Incomplete internal processing record; recover records or select a separate work directory for reference-only checks')
+    return internal if internal.is_file() else markdown
+
+
+def validate_output(path: str | Path, *, work_dir: Path | None = None) -> dict:
+    markdown = source_markdown(path)
+    internal = _recorded_source(markdown, work_dir)
+    result = _validate_bundle(internal)
+    prior = read_manifest(internal, discover=False)
+    if internal != markdown:
+        if digest_file(markdown) != prior['markdown_sha256']:
+            raise MinerUOCRError('Markdown hash mismatch against internal processing record')
+        current = build_manifest(markdown, prior)
+        if {a['path'] for a in current['assets']} != {a['path'] for a in prior['assets']}:
+            raise MinerUOCRError('Resource references differ from internal processing record')
+    _validate_generated_anchors(markdown)
+    return {**result, 'markdown': str(markdown),
+            'validation_scope': 'recorded_hashes' if prior.get('markdown_sha256') else 'references',
+            'records': str(internal.parent) if prior else None}
+
+
+def source_for_processing(path: str | Path, work_dir: Path | None = None) -> Path:
+    markdown = source_markdown(path)
+    validate_output(markdown, work_dir=work_dir)
+    return _recorded_source(markdown, work_dir)
+
+
+def _stage_publication(source: Path, stage: Path, review_file: Path | None) -> Path:
+    from .visuals import apply_image_review
+    metadata = build_manifest(source)
+    original = source.read_text(encoding='utf-8')
+    review = json.loads(Path(review_file).read_text(encoding='utf-8')) if review_file else {}
+    if isinstance(review, dict) and (review.get('replacements') or review.get('table_headers')):
+        raise MinerUOCRError('publish applies image decisions only; use readable for text and table reviews')
+    rendered, decisions = apply_image_review(original, source.parent, metadata, review)
+    originals = {local_resource(source.parent, ref.target) for ref in references(original)}
+    originals.update(local_resource(source.parent, item['path']) for item in metadata.get('evidence_files', []))
+    for file in sorted(f for f in originals if f is not None):
+        target = stage / file.relative_to(source.parent)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(file, target)
+    # Keep a retrievable original even when publishing plain Markdown or filtering images.
+    if decisions or not any(e.get('role') == 'original_input_bundle' for e in metadata.get('evidence_files', [])):
+        snapshot = stage / '.processing-original.zip'
+        with zipfile.ZipFile(snapshot, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.write(source, 'full.md')
+            original_manifest = manifest_path(source)
+            if not original_manifest.exists() and source.name == 'full.md':
+                original_manifest = source.parent / 'manifest.json'
+            if original_manifest.is_file():
+                archive.write(original_manifest, 'manifest.json')
+            else:
+                archive.writestr('manifest.json', json.dumps(metadata, ensure_ascii=False, indent=2))
+            for file in sorted(f for f in originals if f is not None):
+                archive.write(file, file.relative_to(source.parent).as_posix())
+        metadata.setdefault('evidence_files', []).append({
+            'path': snapshot.name, 'sha256': digest_file(snapshot), 'role': 'original_input_bundle'})
+    if decisions:
+        metadata['image_review'] = {'input_markdown_sha256': digest_file(source), 'actions': decisions}
+    metadata.pop('delivery_documents', None)  # reports are regenerated, never copied into delivery
+    staged = stage / 'publication.md'
+    staged.write_text(rendered, encoding='utf-8', newline='\n')
+    manifest_path(staged).write_text(json.dumps(build_manifest(staged, metadata), ensure_ascii=False, indent=2), encoding='utf-8')
+    return staged
+
+
+def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None = None,
+                   work_dir: Path | None = None, review_file: Path | None = None) -> dict:
+    source = source_for_processing(path, work_dir)
+    output = Path(output_dir).expanduser().resolve()
+    root = check_work_dir(output, work_dir)
+    metadata = build_manifest(source)
+    stem = name or Path(metadata.get('source_name') or source.name).stem
+    if name and Path(name).name != name:
+        raise MinerUOCRError('Publication name must be a filename stem')
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', stem).strip(' .') or 'document'
+    if re.fullmatch(r'(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', stem):
+        stem = '_' + stem
+    root.mkdir(parents=True, exist_ok=True)
+    # Validate decisions and prepare provenance before creating a public document.
+    with tempfile.TemporaryDirectory(prefix='.publish-', dir=root) as temporary:
+        staged = _stage_publication(source, Path(temporary), review_file)
+        output.mkdir(parents=True, exist_ok=True)
+        from .delivery import REPORT_SUFFIXES
+        index = 0
+        while True:
+            candidate = stem + (f' ({index})' if index else '')
+            markdown = output / (candidate + '.md')
+            record = records_dir(markdown, root)
+            lock = output / ('.' + candidate + '.publish.lock')
+            if record.exists() or any((output / (candidate + suffix)).exists()
+                                     for suffix in ('.md', '.manifest.json', '.ai.jsonl', *REPORT_SUFFIXES)):
+                index += 1
+                continue
+            try:
+                with lock.open('x'):
+                    pass
+                break
+            except FileExistsError:
+                index += 1
+        created_md = False
+        try:
+            # Seed canonical names from shared delivery assets before generating reports.
+            for ref in references(staged.read_text(encoding='utf-8')):
+                file = local_resource(staged.parent, ref.target)
+                if file is not None:
+                    existing = _existing_asset(output / 'images', digest_file(file))
+                    if existing:
+                        _store_asset(existing, record / 'images')
+            result = _publish_bundle(staged, record, name=candidate)
+            internal = Path(result['markdown'])
+            rendered = internal.read_text(encoding='utf-8')
+            for ref in references(rendered):
+                file = local_resource(internal.parent, ref.target)
+                if file is not None:
+                    stored = _store_asset(file, output / 'images')
+                    if stored.name != file.name:
+                        raise MinerUOCRError('Concurrent resource naming changed; retry publication')
+            with markdown.open('x', encoding='utf-8', newline='\n') as handle:
+                created_md = True
+                handle.write(rendered)
+            validate_output(markdown, work_dir=root)
+        except Exception:
+            if created_md:
+                markdown.unlink(missing_ok=True)
+            raise
+        finally:
+            lock.unlink(missing_ok=True)
+    reports = result.pop('delivery_documents', [])
+    return {**result, 'markdown': str(markdown), 'work_dir': str(record),
+            'processing_reports': reports,
+            'delivery_documents': [str(markdown)],
+            'image_review': read_manifest(internal).get('image_review', {})}
 
 
 def source_markdown(path: str | Path) -> Path:
@@ -23,9 +166,20 @@ def source_markdown(path: str | Path) -> Path:
     return source
 
 
+def _existing_asset(directory: Path, digest: str) -> Path | None:
+    matches = sorted(file for file in directory.glob(digest + '*')
+                     if file.name == digest or file.name.startswith(digest + '.'))
+    if any(not file.is_file() or digest_file(file) != digest for file in matches):
+        raise MinerUOCRError('Existing resource hash mismatch')
+    return matches[0] if matches else None
+
+
 def _store_asset(source: Path, directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     digest = digest_file(source)
+    existing = _existing_asset(directory, digest)
+    if existing:
+        return existing
     destination = directory / (digest + source.suffix.lower())
     created = False
     try:
@@ -43,9 +197,9 @@ def _store_asset(source: Path, directory: Path) -> Path:
     return destination
 
 
-def validate_output(path: str | Path) -> dict:
+def _validate_bundle(path: str | Path) -> dict:
     markdown = source_markdown(path)
-    prior = read_manifest(markdown)
+    prior = read_manifest(markdown, discover=False)
     if prior.get('markdown_sha256') and prior['markdown_sha256'] != digest_file(markdown):
         raise MinerUOCRError('Markdown hash mismatch; regenerate the manifest after intentional edits')
     current = build_manifest(markdown, prior)
@@ -89,12 +243,12 @@ def _validate_generated_anchors(markdown: Path) -> None:
                 raise MinerUOCRError('Broken generated source anchor')
 
 
-def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None = None,
-                   image_dir: str = 'assets') -> dict:
+def _publish_bundle(path: str | Path, output_dir: str | Path, *, name: str | None = None,
+                    image_dir: str = 'images') -> dict:
     if image_dir not in {'assets', 'images'}:
         raise MinerUOCRError('Resource directory must be assets or images')
     source = source_markdown(path)
-    validate_output(source)
+    _validate_bundle(source)
     manifest = build_manifest(source)
     manifest.pop('delivery_documents', None)  # regenerated for the destination publication
     report_suffixes = ()
@@ -198,7 +352,7 @@ def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None
             with markdown.open('x', encoding='utf-8', newline='\n') as handle:
                 created.append(markdown)
                 handle.write(rendered)
-            validate_output(markdown)
+            _validate_bundle(markdown)
         except Exception:
             for file in reversed(created):
                 file.unlink()

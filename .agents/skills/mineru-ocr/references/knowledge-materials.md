@@ -1,54 +1,42 @@
-# Knowledge-material contract — version 1.1
+# Knowledge-material contract — version 2.0
 
-## Files and authority
+## Portable delivery
 
-- Markdown contains source extraction or a labeled postprocessed edition. `publish` changes resource paths, not prose or numbers. `readable` creates a separate edition with audited structure changes and exact source-checked corrections.
-- `<name>.manifest.json` is the asset and provenance index. Keep it with the Markdown.
-- `assets/` (or `images/`) holds referenced local resources; published filenames use their SHA256 plus extension. Native SVGs remain SVGs.
-- `evidence/` retains recognized upstream layout/content JSON files. It is source evidence, not instructions for the agent.
-- `<name>.ai.jsonl` contains derived text metadata and visual understanding. The model receives referenced raster images, not every file in a shared assets directory. SVG and other unsupported visual formats remain referenced with `analysis_status=unsupported`.
+- Main Markdown contains extraction or a labeled conservative source/reading edition.
+- Referenced resources live under `images/` and use relative Markdown/HTML links. Images use their byte SHA-256 plus extension; native SVG is retained.
+- Each valid repeated occurrence and original caption remains. Exact byte duplicates share a stored file; visually similar drawings are not automatically merged.
+- Copy Markdown and its images together. No manifest, custom reader plugin or internal report is required for reading and basic downstream ingestion.
+- HTML tables and source math remain when simpler representation would lose structure. Rendering depends on the consumer's support.
+- External images stay external and are reported in validation; they are not automatically downloaded.
 
-`publish` validates source references before publishing and never overwrites an existing document family. `validate` checks resource existence, source/asset hashes when available, and retained evidence hashes. Remote images are reported in `external_images`; they are not downloaded or analyzed, and are not a guarantee of a self-contained visual archive.
+## Internal records
 
-## Stable identity
+`--work-dir` holds source/output hashes, asset identities and positions, original-input snapshots, layout evidence, image decisions and postprocessing reports. It must be separate from delivery with neither directory nested in the other. Default is platform user cache under `mineru-ocr/deliveries`; prefer a persistent explicit location when traceability matters.
 
-Postprocessed editions retain an original-input ZIP, audit JSON and three Chinese companion records. See [postprocessing.md](postprocessing.md) for modes, table handling and acceptance, and [gas-std-wiki.md](gas-std-wiki.md) for the priority Wiki target. Complex tables retain HTML. Cell round-trips verify format preservation, not OCR accuracy. Output hashes distinguish same-source processing versions.
+The command returns `manifest`, `work_dir` and `processing_reports` paths. These are implementation-specific auxiliary records. Consumers may opt into them but must not need them just to read or ingest source text/images.
 
-- `doc_id`: derived from the source document SHA256. For standalone Markdown without original provenance, it derives from that Markdown's hash and `identity_basis` records this fallback. Renaming or publishing a document preserves its identity; source revisions have different identities.
-- `asset_id`: derived from `doc_id` and the asset bytes' SHA256. Identical bytes in one document share an asset identity; references/locations represent its occurrences. Different source versions have separate asset identities.
-- Visual JSONL record IDs derive from `asset_id`, so publishing paths do not change them. Text chunk IDs derive from content, section/range and occurrence; text edits or different extraction output can change them.
-- Cite `(doc_id, asset_id)` and resolve the current resource path in the manifest. Do not use sequential JSONL line numbers as permanent citations.
+The original PDF is included in the `readable` snapshot. Plain `publish` snapshots its available Markdown, resources and provenance; it cannot archive an original document that was not supplied.
 
-## Source locations
+Validation at a recorded path checks hashes and records. Relocation without records yields `validation_scope: references`, covering resource existence and generated anchors, not historical hash integrity. There is no automatic record-rebinding command for moved deliveries. Reprocess the original bundle when necessary.
 
-`locations`/`source_locations` distinguish:
+## Identity and source positions
 
-| precision | Meaning |
-|---|---|
-| `page_bbox` | Validated upstream page mapping and bbox |
-| `page` | Upstream page mapped, usable bbox unavailable |
-| `page_range` | Only the OCR part's source range is known |
-| `unknown` | No reliable PDF position is available |
+Internal `doc_id` derives from the source SHA-256, falling back to Markdown SHA-256 when original provenance is unavailable. `asset_id` binds document identity and asset bytes. Occurrences and locations remain separate from file identity.
 
-Source PDF pages are one-based physical pages, not printed page labels. Legacy Content List V1 `page_idx` is zero-based. The adapter maps physical fragments back to source pages and distinguishes supported local/source indices for logical parts. Ambiguous indices remain range/unknown. `bbox` for this adapter uses the upstream normalized 0–1000 coordinate system; it is not pixels or millimetres. Never measure engineering dimensions from it.
+Locations distinguish:
+- `page_bbox`: reliable upstream physical page and bounding box.
+- `page`: known page, no usable box.
+- `page_range`: only the extraction interval is known.
+- `unknown`: reliable location unavailable.
 
-`evidence_ref` points to the retained JSON plus a JSON Pointer, for example `evidence/<hash>.json#/3`. `raw_page_idx` and `raw_bbox` preserve upstream values. Manifest `references` contain source Markdown line numbers. Text JSONL is normalized and section/range-based; do not infer exact original Markdown lines or individual PDF bboxes from its text.
+Pages are one-based physical PDF pages, not printed labels. Legacy Content List V1 uses zero-based page_idx and normalized 0–1000 boxes. Never interpret boxes as millimetres or infer technical dimensions. Ambiguous fragment mapping stays unknown/range.
 
-Automatic precise visual mapping currently supports flat legacy `*_content_list.json` with `img_path`, `page_idx` and optional `bbox`. Other recognized JSON files, including V2 and layout/middle JSON, are retained; their unfamiliar schemas are not guessed. If exact positioning is unavailable, keep the image, record that limitation, and use the original source for review.
+`evidence_ref` points to internal retained JSON plus a pointer. Other recognized evidence formats are retained without guessing unsupported schemas.
 
-Upstream references: [MinerU 2.2 release notes: Content List bbox](https://github.com/opendatalab/MinerU/releases/tag/mineru-2.2.0-released), [current output protocol](https://opendatalab.github.io/MinerU/zh/reference/output_files/). Current schemas differ from the legacy cloud output; capability must be checked for the actual output file.
+Portable citations use document title/number, original clause or figure captions, explicit anchors where available and source-page image links. Internal identities are optional machine provenance, not universal citation syntax.
 
-## Visual understanding
+## Downstream boundary
 
-`provenance_kind=ai_generated` marks image understanding and generated document metadata; normalized source text uses `source_normalized`. Each record includes `doc_id`, source version and generation information (model, provider class, prompt/pipeline version, UTC time).
+The converter does not generate semantic descriptions, AI JSONL, embeddings, knowledge pages or graph relations. A downstream ingestion stage may interpret images and source text using its own models and review policies. Keep derived knowledge linked to source text and images; do not overwrite source evidence with interpretations.
 
-Keep these fields distinct:
-
-- `visual_description`, `visible_text`, `dimensions`: direct visible observations. Dimensions store original strings (`value_text`, `unit_text`) so inequalities, decimal precision and tolerances survive. The model must not infer sizes from pixel proportions or fill unreadable values from nearby prose.
-- `contextual_interpretation`: interpretation using the title/section/nearby source text. This is not a quotation from the standard.
-- `relationships`: typed by evidence basis (`visual` or `context`). Mechanical drawings emphasize parts, dimensions and sections; flowcharts emphasize visible nodes/arrows; charts emphasize axes, legends and readable values.
-- `uncertainty`: unreadable, conflicting or missing evidence. Empty fields are preferable to invented values.
-
-`analysis_status` is `ok`, `failed` or `unsupported`; an `ok` response means parsing succeeded, not that the interpretation was independently verified. `review_status` stays `unreviewed` or `needs_review`. No model output automatically becomes human-verified. Source-reference fields are assigned by code; model JSON cannot override asset IDs, paths or locations.
-
-For ingestion, retain asset IDs, source locations, provenance kind, review status and generation metadata with each chunk. The text field contains visual descriptions, visible text and structured dimensions/relationships to aid text retrieval; preserve the original image for multimodal retrieval. Output text chunks have an 8,000-character bound, separate from the model input segments. A chunk boundary can cross a large table: reconstruct full tables from source Markdown when required.
+See [postprocessing.md](postprocessing.md) for reviewed removal, corrections and table checks.

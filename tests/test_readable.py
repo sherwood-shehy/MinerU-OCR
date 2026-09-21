@@ -83,7 +83,7 @@ def test_readable_keeps_raw_links_source_and_hashes_and_no_clobber(tmp_path):
     from mineru_ocr.publish import validate_output
     pdf, bundle = make_source(tmp_path)
     before = (bundle / 'full.md').read_bytes()
-    result = prepare_readable(bundle, pdf, tmp_path / 'out')
+    result = prepare_readable(bundle, pdf, tmp_path / 'out', edition='reading')
     markdown = Path(result['markdown'])
     text = markdown.read_text(encoding='utf-8')
     assert 'images/' in text and 'source-page-2' in text
@@ -141,14 +141,15 @@ def test_source_profile_has_traceable_reports_original_snapshot_and_no_page_gall
     assert 'id="body-clause-1"' in text
     manifest = json.loads(Path(result['manifest']).read_text(encoding='utf-8'))
     snapshot = next(e for e in manifest['evidence_files'] if e.get('role') == 'original_input_bundle')
-    with zipfile.ZipFile(md.parent / snapshot['path']) as archive:
+    with zipfile.ZipFile(Path(result['work_dir']) / snapshot['path']) as archive:
         assert archive.read('full.md') == original
         assert archive.read('input/scan.pdf') == pdf.read_bytes()
-    assert len(result['delivery_documents']) == 3
+    assert len(result['processing_reports']) == 3
+    assert result['delivery_documents'] == [str(md)]
     assert validate_output(md)['valid']
     again = publish_output(md, tmp_path / 'another')
     assert validate_output(again['markdown'])['valid']
-    report = Path(result['delivery_documents'][0])
+    report = Path(result['processing_reports'][0])
     report.write_text(report.read_text(encoding='utf-8') + '\nchanged', encoding='utf-8')
     with pytest.raises(MinerUOCRError, match='Delivery document hash'):
         validate_output(md)

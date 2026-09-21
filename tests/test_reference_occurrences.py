@@ -3,12 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from mineru_ocr.enhancer import enhance_output
 from mineru_ocr.merge import merge_job
 from mineru_ocr.provenance import build_manifest
 from mineru_ocr.publish import publish_output, validate_output
 from mineru_ocr.references import local_resource, references, rewrite_references
-from test_enhancer import FakeEnhancementClient
 from test_merge import make_job
 
 
@@ -60,22 +58,18 @@ def test_link_before_image_does_not_hide_an_extensionless_image(tmp_path):
 
 
 @pytest.mark.parametrize('second_use', ['![Second][figure]', '![figure][]', '![figure]'])
-def test_repeated_reference_locations_survive_publish_and_enhance(tmp_path, second_use):
+def test_repeated_reference_locations_survive_publish(tmp_path, second_use):
     (tmp_path / 'image.png').write_bytes(b'image')
     markdown = tmp_path / 'source.md'
     original = REPEATED_IMAGE.replace('![Second][figure]', second_use)
     markdown.write_text(original, encoding='utf-8')
     published = publish_output(markdown, tmp_path / 'out')
     assert validate_output(published['markdown'])['valid']
-    result = enhance_output(published['markdown'], client=FakeEnhancementClient())
-    records = [json.loads(line) for line in Path(result['ai_jsonl']).read_text(encoding='utf-8').splitlines()]
-    image = next(record for record in records if record['type'] == 'image')
-    assert [item['line'] for item in image['metadata']['source_references']] == [2, 4]
-    assert [item['page_range'] for item in image['source_locations']] == [[1, 200], [201, 300]]
+    manifest = json.loads(Path(published['manifest']).read_text(encoding='utf-8'))
+    image = manifest['assets'][0]
+    assert [item['line'] for item in image['references']] == [2, 4]
+    assert [item['page_range'] for item in image['locations']] == [[1, 200], [201, 300]]
     assert markdown.read_text(encoding='utf-8') == original
-    text_chunks = [record for record in records if record['type'] == 'text']
-    assert any(image['asset_id'] in record['asset_ids'] for record in text_chunks
-               if record['page_range'] == [201, 300])
 
 
 @pytest.mark.parametrize('uses', ['![Figure][f]\n[Download][f]', '![f][]\n[f][]', '![f]\n[f]'])

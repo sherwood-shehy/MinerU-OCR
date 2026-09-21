@@ -1,4 +1,4 @@
-"""Human-readable, source-bound delivery records for downstream wiki ingestion."""
+"""Internal, source-bound processing reports; portable reading has no dependency on them."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,22 +43,26 @@ def report_documents(manifest: dict, audit: dict) -> dict[str, str]:
     values = {
         '来源编号': config['source_id'], '原始文件名称': manifest.get('source_name'),
         '交付配置': config['profile'], '输入PDF指纹': manifest['source_sha256'],
-        '原始OCR文本指纹': audit['input_markdown_sha256'], '整理正文指纹': manifest['markdown_sha256'],
+        '提取引擎': manifest.get('engine', 'MinerU Cloud'),
+        '原始提取文本指纹': audit['input_markdown_sha256'], '整理正文指纹': manifest['markdown_sha256'],
         'PDF物理页数': manifest.get('page_count'), '生成时间': config['created_at'],
         '发布机构／发布与实施日期': '待按原文核实', '效力核实状态／依据／日期': '待核实',
         '原始取得渠道／公开条件': '待使用者补充', '资料类型／地域／业务主题': '摄入时按目标项目受控词表登记',
-        '变化类型': '同版转写整理；不是发布机构的标准修订',
-        '完整性': '保留输入正文；OCR是否遗漏内容仍须对照原件核实',
+        '变化类型': '原件转写与格式整理',
+        '完整性': '处理前输入保留于快照；提取遗漏与排除决定仍须对照原件核实',
         '实际处理': f'结构整理、{len(audit["reviewed_corrections"])}项有记录替换、图片与条款定位、表格格式判定',
         '人工审核／行业验收': '未完成；程序检查和Agent抽查不能代填人工通过',
     }
+    if config['profile'] == 'generic':
+        for key in ['发布机构／发布与实施日期', '效力核实状态／依据／日期', '资料类型／地域／业务主题']:
+            values.pop(key, None)
     source_info += [f'| {key} | {cell(value)} |' for key, value in values.items()]
     source_info += ['\n## 输入与证据\n']
     for item in manifest.get('evidence_files', []):
         if item.get('role') in {'original_input_bundle', 'readability_audit'}:
             source_info.append('- ' + link('原始输入快照' if item['role'] == 'original_input_bundle' else '处理审计JSON', item['path']) +
                                f'；SHA256：`{item["sha256"]}`')
-    source_info += ['\n原始输入快照保留源PDF、OCR文本、图片与布局证据。正文与本说明属于处理成果。'
+    source_info += ['\n原始输入快照保留源PDF、提取文本、图片与布局证据。正文与本说明属于处理成果。'
                     '源文件名与文内名称不一致时，需在正式来源登记中记录差异。',
                     '\n## 目标规则基线\n',
                     '此清单记录交付时读取的规则指纹，不替代摄入时实际阅读项目规则。']
@@ -74,7 +78,7 @@ def report_documents(manifest: dict, audit: dict) -> dict[str, str]:
                         + link('定位', markdown + '#' + item['anchor']) + ' |')
     locators += ['\n## 图片\n',
                  '下列“程序可解码”只证明文件可读，不代表Agent或人工实际看过图片。'
-                 '图片当前供人工参考；未核对的尺寸、单位和关系不生成技术结论。\n',
+                 '图片保留供阅读和下游引用；未核对的尺寸、单位和关系不生成技术结论。\n',
                  '| 图片 | 来源页／图题 | 文件SHA256 | 文件检查 | 可读性／视觉检查 | 人工核对 | 知识提取 |\n|---|---|---|---|---|---|---|']
     for asset in manifest['assets']:
         if asset['kind'] != 'image':
@@ -120,6 +124,12 @@ def report_documents(manifest: dict, audit: dict) -> dict[str, str]:
                     '\n修改前：\n', fenced(correction['before']), '\n修改后：\n', fenced(correction['after'])]
     if not audit['reviewed_corrections']:
         quality.append('没有应用文字纠错；不表示输入没有识别错误。')
+    quality += ['\n## 独立无效图块筛除\n']
+    for decision in manifest.get('image_review', {}).get('actions', []):
+        quality.append('- ' + cell(decision['kind']) + '；输入引用行：' + cell(decision['lines']) +
+                       '；图片SHA256：`' + decision['sha256'] + '`；' + cell(decision['reason']))
+    if not manifest.get('image_review', {}).get('actions'):
+        quality.append('未执行图片筛除；未确认用途的图块默认保留。')
     quality += ['\n## 结构疑点\n']
     for item in audit.get('suspect_header_blocks', []):
         quality.append(f'- PDF第{item["page"]}页：异常位置的页眉 `{cell(item.get("text"))}`，需结合校勘记录及原页检查。')
@@ -132,7 +142,7 @@ def report_documents(manifest: dict, audit: dict) -> dict[str, str]:
     quality += ['\n## 尚未完成的核对\n',
                 '- 全文OCR完整性、逐格数值和单位、图示技术含义、粗体等原版含义。',
                 '- 标准当前效力、后续修订、取得渠道和公开条件。',
-                '- 行业人员验收；不能依据本报告自动解除目标Wiki中已有缺口。']
+                '- 由使用者按用途完成原文核对；本报告不代表下游知识提取或验收。']
     for target in manifest.get('external_images', []):
         quality.append('- 外链图片未下载、未验证：' + cell(target))
     return dict(zip(REPORT_SUFFIXES, ('\n'.join(source_info) + '\n', '\n'.join(locators) + '\n', '\n'.join(quality) + '\n')))
