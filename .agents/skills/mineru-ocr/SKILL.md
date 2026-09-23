@@ -2,7 +2,7 @@
 name: mineru-ocr
 description: Convert PDFs and small Office documents into faithful Markdown with relative images and source traceability. Preflight PDFs for local PyMuPDF4LLM extraction or MinerU Cloud OCR, then review and postprocess into portable materials for readers, LLM Wikis and RAG systems.
 metadata:
-  version: "0.4.1"
+  version: "0.4.2"
 ---
 
 # MinerU OCR
@@ -29,9 +29,11 @@ mineru-ocr publish RESULT_DIRECTORY_OR_MD --output-dir DELIVERY --work-dir RECOR
 mineru-ocr readable RESULT_DIRECTORY_OR_MD --source-pdf INPUT.pdf --output-dir DELIVERY --work-dir RECORDS
 ```
 
-Preflight every PDF page; selectable text alone is insufficient. Auto chooses local only when every nonblank page is eligible; uncertain/scanned pages route the whole document to cloud. Local OCR stays disabled. Preserve the returned native candidate and quality report when auto falls back after text, numeric or table checks fail. A runtime/installation failure does not authorize fallback. Office inputs and explicit `--engine cloud` use the existing cloud path.
+Preflight every PDF page. Prefer local extraction only for usable native text with no complex, image-based or uncertain table finding. Reuse the pinned local Layout runtime for offline visual table screening; do not introduce a separate OCR/LLM service. Merged/irregular grids, suspected borderless raster tables and model table regions without a reliable native grid route the whole PDF to cloud. Ordinary illustrations alone do not. Table detection is heuristic: check representative complex/continued tables after extraction.
 
-With an output directory, `process` applies the shared postprocessor to PDFs with adapted evidence. Choose `publish` for portable extraction with relative resources, or `readable` for source-page postprocessing of existing results. The latter requires PyMuPDF, the matching PDF and adapted MinerU or native page evidence. Default is generic source edition with selective `auto` tables; `--edition reading` adds the full-page gallery.
+Distinguish blocking `reasons` from review `warnings`: short titles, isolated mapping defects and minority hidden text can proceed locally; textless pages, substantial corruption, predominantly hidden text or scans with small headers block. Report actual blocking reasons. Basic checks cover every page; table-model screening stops once the whole file needs cloud, with remaining table checks marked skipped_document_cloud. Local OCR stays disabled. Local acceptance reuses cached simple table cells and checks page coverage, text, numbers and technical symbols; it does not reconstruct complex tables. Preserve the candidate/report if basic integrity checks trigger auto cloud fallback. Missing dependencies or runtime failures stop without uploading. `--engine local` never uploads, including when preflight detects table risks. Office and explicit `--engine cloud` use the existing cloud path.
+
+With an output directory, `process` applies the shared postprocessor to PDFs with adapted evidence. Choose `publish` for portable extraction with relative resources, or `readable` for source-page postprocessing of existing results. The latter requires PyMuPDF, the matching PDF and adapted MinerU or native page evidence. Default is generic source edition with selective `auto` tables. It creates no full-page PDF screenshots and inserts no per-clause/table/formula verification links. Only an explicit request for `--edition reading` adds source links and the full-page gallery.
 
 For a source-bound image review, process without `--output-dir` first, inspect that exact raw result, then apply its review through `readable`. Local raw results live in the processing directory; cloud results use the existing `.mineru` bundle. Do not re-extract and apply an old Markdown/image review hash.
 
@@ -44,13 +46,13 @@ For long jobs use `submit INPUT`, `status JOB_ID`, then `resume JOB_ID` after pa
 1. Validate input references and match the source PDF hash. Keep original documents and OCR results.
 2. Run `inspect-images RESULT --work-dir RECORDS`. Inspect the returned gallery with original pages and nearby source text. Delete only reviewed independent invalid blocks; keep uncertain or informative marks.
 3. Record exclusions in `image_actions`, bound to the input Markdown hash, image hash and explicit reference lines. Repetition or small size alone is insufficient. Do not erase marks embedded within useful images.
-4. Record source-checked text replacements and table-header confirmations in the same review JSON. Never invent values, units, clauses, cells or exact pages.
-5. Pass `--review-file REVIEW.json` to `readable` or `publish` as appropriate. Complex tables retain HTML; source links support verification. Preserve valid repeated figure occurrences and captions.
-6. Inspect representative tables, formulas, figures with units and appendix boundaries. Run `validate FINAL.md --work-dir RECORDS`. State actual checks and unresolved issues.
+4. Record source-checked text replacements and, only for ambiguous headers, table-header confirmations in the same review JSON. Never invent values, units, clauses, cells or exact pages.
+5. Pass `--review-file REVIEW.json` to `readable` or `publish` as appropriate. Simple tables become Markdown when safely representable; complex tables retain HTML. Default delivery needs no source-page screenshots. Preserve valid repeated figure occurrences and captions.
+6. Inspect representative tables, formulas, figures with units and appendix boundaries. Run `validate FINAL.md --work-dir RECORDS`. State actual checks and unresolved issues. Report the selected engine and any preflight or native-quality fallback reason; selectable text alone does not prove a usable text layer.
 
 ## Deliver
 
-- Delivery is the main `<name>.md` plus referenced resources under `images/`, with standard relative links. Move them together. A manifest is not required for ordinary reading or basic ingestion.
+- Delivery is the main `<name>.md` plus body resources under `images/`, with standard relative links. Do not add whole-page PDF screenshots to default delivery. Move them together. A manifest is not required for ordinary reading or basic ingestion.
 - Let the publisher implement hash naming, exact-byte deduplication, reference rewriting and collision avoidance. Never delete shared images belonging to other documents.
 - `--work-dir` is separate and non-nested with delivery. Prefer a persistent explicit directory for important source records; the default user cache may be cleaned externally.
 - Manifest, original snapshots, layout evidence, image decisions and postprocessing reports stay internal. Return the Markdown link first and the internal records location separately; do not treat reports as required public companions.

@@ -115,8 +115,10 @@ def test_reviewed_cell_and_formula_corrections_keep_original_page_mapping(tmp_pa
     review.write_text(json.dumps({'source_sha256': digest_file(pdf), 'replacements': [
         {'before': '1.23', 'after': '1.24', 'page': 1, 'count': 2, 'reason': 'test source check'}]}), encoding='utf-8')
     result = prepare_readable(bundle, pdf, tmp_path / 'out', review_file=review)
-    assert result['review']['table_source_links'] == 1
-    assert result['review']['display_math_source_links'] == 1
+    assert result['review']['table_source_matches'] == 1
+    assert result['review']['display_math_source_matches'] == 1
+    assert result['review']['table_source_links'] == 0
+    assert result['review']['display_math_source_links'] == 0
 
 
 def test_generated_anchor_checks_ignore_code_but_reject_broken_links(tmp_path):
@@ -139,7 +141,11 @@ def test_source_profile_has_traceable_reports_original_snapshot_and_no_page_gall
     text = md.read_text(encoding='utf-8')
     assert 'id="source-pages"' not in text
     assert 'id="body-clause-1"' in text
+    assert 'images/' not in text
+    assert '原文：' not in text and '核对表格原页' not in text
+    assert result['review']['source_page_images'] == 0
     manifest = json.loads(Path(result['manifest']).read_text(encoding='utf-8'))
+    assert not manifest['assets']
     snapshot = next(e for e in manifest['evidence_files'] if e.get('role') == 'original_input_bundle')
     with zipfile.ZipFile(Path(result['work_dir']) / snapshot['path']) as archive:
         assert archive.read('full.md') == original
@@ -153,6 +159,27 @@ def test_source_profile_has_traceable_reports_original_snapshot_and_no_page_gall
     report.write_text(report.read_text(encoding='utf-8') + '\nchanged', encoding='utf-8')
     with pytest.raises(MinerUOCRError, match='Delivery document hash'):
         validate_output(md)
+
+
+def test_source_preserves_body_figure_without_rendering_full_pages(tmp_path, monkeypatch):
+    import pymupdf as fitz
+    from mineru_ocr.publish import validate_output
+    pdf, bundle = make_source(tmp_path)
+    with fitz.open(pdf) as doc:
+        doc[0].get_pixmap().save(bundle / 'figure.png')
+    md = bundle / 'full.md'
+    md.write_text(md.read_text(encoding='utf-8') + '\n\n![Figure 1](figure.png)\n', encoding='utf-8')
+    original_image = (bundle / 'figure.png').read_bytes()
+    def reject_full_page_render(*args, **kwargs):
+        pytest.fail('default source edition must not rasterize source pages')
+    monkeypatch.setattr(fitz.Page, 'get_pixmap', reject_full_page_render)
+    result = prepare_readable(bundle, pdf, tmp_path / 'out')
+    manifest = json.loads(Path(result['manifest']).read_text(encoding='utf-8'))
+    assert len(manifest['assets']) == 1
+    asset = Path(result['markdown']).parent / manifest['assets'][0]['path']
+    assert asset.read_bytes() == original_image
+    assert '![Figure 1](images/' in Path(result['markdown']).read_text(encoding='utf-8')
+    assert validate_output(result['markdown'])['valid']
 
 
 def test_simple_table_review_conversion_and_report_family_collision(tmp_path):

@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
             item.add_argument("--timeout", type=int, default=1800)
             item.add_argument("--output-dir", type=Path, help="Publish checked Markdown and resources into this directory")
             item.add_argument("--engine", choices=["auto", "local", "cloud"], default="auto",
-                              help="Auto preflights PDFs; scans or failed native quality checks use cloud. Local never uploads.")
+                              help="Auto screens PDF text and tables; risky tables, scans or failed integrity checks use cloud. Local never uploads.")
             item.add_argument("--review-file", type=Path)
             item.add_argument("--name")
             item.add_argument("--title")
@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     readable.add_argument("--title")
     readable.add_argument("--review-file", type=Path, help="Explicit source-checked corrections; optional")
     readable.add_argument("--profile", choices=["generic", "gas-std-wiki"], default="generic")
-    readable.add_argument("--edition", choices=["reading", "source"], help="Default: source; reading adds a full-page gallery")
+    readable.add_argument("--edition", choices=["reading", "source"], help="Default: source, without page screenshots; reading explicitly adds a full-page gallery")
     readable.add_argument("--table-format", choices=["html", "auto"], help="Auto converts only safely representable tables")
     readable.add_argument("--target-project", type=Path, help="Read and fingerprint target wiki rules; never ingest automatically")
     readable.add_argument("--source-id", help="Source identifier used in Chinese delivery records")

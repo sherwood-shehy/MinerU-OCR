@@ -49,11 +49,14 @@ def make_pdf(path, *, scanned=False, hidden=False, mixed=False, table=False, ima
 def test_preflight_inspects_all_pages_and_detects_old_ocr(tmp_path):
     normal = preflight_pdf(make_pdf(tmp_path / 'native.pdf'))
     assert normal['recommended_engine'] == 'local'
-    for mode, reason in [('scanned', 'no_text_layer'), ('hidden', 'hidden_text_or_old_ocr'), ('mixed', 'no_text_layer')]:
+    for mode, reason in [('scanned', 'no_text_layer'), ('mixed', 'no_text_layer')]:
         result = preflight_pdf(make_pdf(tmp_path / (mode + '.pdf'), **{mode: True}))
         assert result['recommended_engine'] == 'cloud'
         assert reason in result['pages'][-1]['reasons']
     assert len(result['pages']) == 2 and result['cloud_pages'] == [2]
+    hidden = preflight_pdf(make_pdf(tmp_path / 'hidden.pdf', hidden=True))
+    assert hidden['recommended_engine'] == 'local'
+    assert 'hidden_text_present' in hidden['pages'][0]['warnings']
 
 
 def test_preflight_bad_input_and_encryption(tmp_path):
@@ -150,8 +153,9 @@ def test_local_end_to_end_preserves_evidence_and_portable_package(tmp_path):
     markdown = Path(result['markdown'])
     text = markdown.read_text(encoding='utf-8')
     assert '中文文字层与原页核对测试' in text and '2000' in text
-    assert '核对表格原页' in text and 'images/' in text
-    assert '<!-- PDF source page' not in text
+    assert '核对表格原页' not in text and 'images/' in text
+    assert '<!-- PDF source page 1 -->' in text
+    assert result['review']['source_page_images'] == 0
     assert set(p.name for p in markdown.parent.iterdir()) == {markdown.name, 'images'}
     assert source.read_bytes() == before
     assert validate_output(markdown, work_dir=tmp_path / 'records')['valid']
@@ -188,23 +192,15 @@ def test_table_spans_cannot_be_flattened_without_rejection(tmp_path):
             page.insert_text(point, text, fontsize=11)
         doc.saveIncr()
     pytest.importorskip('pymupdf4llm')
-    # Layout 1.28.2 flattens this merged header; the independent source-grid
-    # check must reject it before any document reaches delivery.
-    with pytest.raises(native.NativeQualityError) as rejected:
+    # Reject before extraction, rather than repairing/validating spans later.
+    assert 'complex_table' in preflight_pdf(source)['pages'][0]['reasons']
+    with pytest.raises(MinerUOCRError, match='Local-only'):
         workflow.process_documents([str(source)], OCROptions(), 1, engine='local',
                                    output_dir=tmp_path / 'delivery', work_dir=tmp_path / 'records')
-    assert not rejected.value.report['pages'][0]['table_cells_match']
     assert not list((tmp_path / 'delivery').glob('*.md'))
-    with fitz.open(source) as doc:
-        original = doc[0].get_text()
-        flattened = '<table><tr><th>Merged header</th><th></th></tr><tr><td>Parameter</td><td>Value</td></tr><tr><td>Pressure</td><td>2000</td></tr></table>'
-        # Preserve all source text; rejection must come from the changed span matrix.
-        assert not native.check_page(doc[0], original + flattened)['table_cells_match']
-        restored = flattened.replace('<th>Merged header</th><th></th>', '<th colspan="2">Merged header</th>')
-        assert native.check_page(doc[0], original + restored)['table_cells_match']
 
 
-def test_blank_physical_page_is_retained_with_a_source_link(tmp_path):
+def test_blank_physical_page_is_retained_without_a_screenshot(tmp_path):
     pytest.importorskip('pymupdf4llm')
     source = make_pdf(tmp_path / 'blank-end.pdf')
     with fitz.open(source) as doc:
@@ -215,7 +211,9 @@ def test_blank_physical_page_is_retained_with_a_source_link(tmp_path):
     result = workflow.process_documents([str(source)], OCROptions(), 1, engine='local',
                                         output_dir=tmp_path / 'delivery', work_dir=tmp_path / 'records')[0]
     assert len(result['quality']['pages']) == 2
-    assert '[第 2 页](images/' in Path(result['markdown']).read_text(encoding='utf-8')
+    text = Path(result['markdown']).read_text(encoding='utf-8')
+    assert '<!-- PDF source page 2 -->' in text
+    assert 'images/' not in text
 
 
 def test_runtime_error_is_reported_without_cloud_fallback(tmp_path, monkeypatch):

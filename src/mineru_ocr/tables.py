@@ -1,4 +1,4 @@
-"""Loss-aware conversion of explicitly headed, rectangular HTML tables to GFM."""
+"""Loss-aware conversion of structurally simple HTML tables to GFM."""
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +19,7 @@ class TableParser(HTMLParser):
         self.kinds = []
         self.cell = None
         self.problem = None
+        self.header_rows = 0
 
     def handle_starttag(self, tag, attrs):
         allowed = {'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'}
@@ -36,6 +37,10 @@ class TableParser(HTMLParser):
         if tag == 'tr':
             self.rows.append([])
             self.kinds.append([])
+            if 'thead' in self.stack:
+                self.header_rows += 1
+            if 'tfoot' in self.stack:
+                self.problem = self.problem or 'footer_section'
         if tag in {'td', 'th'}:
             self.cell = []
             if self.kinds:
@@ -101,18 +106,20 @@ def convert_table(value: str, *, mode: str = 'html', header_confirmed: bool = Fa
     rows = parser.rows
     if not reason and (len(rows) < 2 or not rows[0] or any(len(row) != len(rows[0]) for row in rows)):
         reason = 'not_rectangular_or_no_body'
-    if not reason and len(rows[0]) > 8:
-        reason = 'wide_table'
-    if not reason and any(len(cell_text(c)) > 240 for row in rows for c in row):
-        reason = 'long_cells'
     if not reason and any('$' in c and (c.count('$') % 2 or '$$' in c) for row in rows for c in row):
         reason = 'complex_math'
     if not reason and any(r'\|' in c for row in rows for c in row):
         reason = 'ambiguous_pipe_escape'
     if not reason and any('th' in row for row in parser.kinds[1:]):
         reason = 'row_headers_or_multiple_header_rows'
+    if not reason and parser.header_rows > 1:
+        reason = 'multiple_header_rows'
     explicit_header = bool(parser.kinds and all(c == 'th' for c in parser.kinds[0]))
-    if not reason and not (explicit_header or header_confirmed):
+    # HTML from OCR commonly uses td for every cell. A complete textual first
+    # row is accepted as the conventional single header, without semantic AI.
+    textual_header = bool(rows and rows[0] and all(
+        any(c.isalpha() for c in cell_text(value)) and '$' not in value for value in rows[0]))
+    if not reason and not (explicit_header or header_confirmed or textual_header):
         reason = 'header_needs_source_review'
     if reason:
         return value, {**record, 'reason': reason}
@@ -125,5 +132,6 @@ def convert_table(value: str, *, mode: str = 'html', header_confirmed: bool = Fa
     result = '\n'.join(lines)
     return result, {**record, 'format': 'markdown', 'reason': 'rectangular_verified',
                     'rows': len(rows), 'columns': len(rows[0]), 'cells_preserved': True,
-                    'header_basis': 'html_th' if explicit_header else 'source_review',
+                    'header_basis': ('html_th' if explicit_header else 'source_review' if header_confirmed
+                                     else 'textual_first_row_convention'),
                     'output_sha256': table_hash(result)}

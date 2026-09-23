@@ -1,4 +1,4 @@
-# MinerU OCR 0.4.1
+# MinerU OCR 0.4.2
 
 [简体中文](README_zh-CN.md) | English
 
@@ -6,13 +6,14 @@ Convert original documents into **faithful, traceable, AI-readable Markdown mate
 
 A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud OCR, resumable jobs and conservative offline postprocessing. Knowledge synthesis, visual interpretation, embeddings and ingestion belong to downstream systems.
 
-## Changes in 0.4.1
+## Changes in 0.4.2
 
-- `preflight` checks every physical PDF page for native text, bad mappings, hidden text, image coverage and sparse/blank pages. A selectable text layer alone is insufficient.
-- `process --engine auto` (default) uses PyMuPDF4LLM for eligible PDFs; uncertain/scanned PDFs and failed native quality checks use MinerU Cloud. `--engine local` never uploads; `--engine cloud` explicitly selects the existing cloud path. Mixed PDFs are routed as a whole.
-- Local extraction disables OCR, preserves raw page chunks and HTML tables, and checks page coverage, text retention, numeric tokens and detected table cells before publication. Missing dependencies and runtime failures are not silently converted into uploads.
-- Both engines share source-page postprocessing, review decisions, image deduplication, portable publication and validation. Native page evidence has its own adapter; it is not labeled as MinerU Content List.
-- `doctor` checks package versions/imports and provides setup guidance. Copying a skill does not install its CLI or Python dependencies.
+- Screen native-text PDFs for table risks before extraction. Merged/irregular tables, raster tables and uncertain structures route the whole PDF to MinerU Cloud; clear native text and simple ruled tables prefer local extraction. Ordinary illustrations alone do not force cloud.
+- Reuse the pinned Layout image model and source grid geometry, without adding dependencies or local OCR. Suspected borderless raster tables also route to cloud. Preflight remains offline; missing runtime components stop rather than silently uploading.
+- Simplify local acceptance: reuse simple table cells cached by preflight instead of repeating detection and rebuilding complex span matrices. Keep page coverage, text, numeric and technical-symbol checks, and auto fallback on basic integrity failure. Local-only never uploads.
+- Convert simple all-td tables using a recorded textual-first-row header convention; column count and cell length no longer prevent Markdown. Merged/multi-header/rich tables remain HTML. Ambiguous empty or numeric-only headers still require review.
+- Default delivery contains Markdown and body images only, with relative links and exact-byte deduplication. Full-page PDF screenshots and repetitive verification links require an explicit reading edition.
+- Both engines share conservative formatting and reviewed corrections. Detection and validation are not semantic accuracy guarantees; inspect representative complex tables and formulas.
 
 ## Changes in 0.4.0
 
@@ -20,7 +21,7 @@ A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud O
 - Manifests, original-input snapshots, layout evidence and review reports live in a separate processing directory. Readers and basic ingestion do not require them.
 - Reviewed independent watermark, stamp, logo and decoration blocks can be excluded. Decisions bind to the input Markdown hash, image hash and exact occurrence lines. Uncertain or informative marks remain; valid image pixels are never erased.
 - Byte-identical images share a file while every useful occurrence and caption remains. Similar technical drawings are not merged using perceptual similarity.
-- `readable` defaults to a generic source edition and conservative automatic table conversion. `--edition reading` adds navigation and the full-page gallery.
+- `readable` defaults to a generic source edition and conservative automatic table conversion. It generates no full-page screenshots or per-clause verification links; `images/` contains body resources. Explicit `--edition reading` adds navigation, source links and the full-page gallery.
 - The extra Doubao enrichment modules, `enhance`, `--enhance`, `--enhance-best-effort` and AI JSONL generation have been removed. Existing outputs and legacy local configuration are retained. MinerU's own OCR/VLM extraction remains.
 - gas-std-wiki is an optional adapter, not a mandatory consumer.
 
@@ -36,7 +37,7 @@ python -m pip install -e ".[test,local]"  # Complete offline test suite
 python -m mineru_ocr.cli doctor
 ```
 
-Core dependencies: httpx, pydantic, pypdf, platformdirs and python-dotenv. PDF postprocessing uses PyMuPDF. The optional `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family; pip resolves its transitive dependencies. No additional OCR engine, LLM service or second local table parser is required. Dependencies are installed into the existing authorized Python environment, not copied into the skill. `doctor` does not install anything; use `python -m mineru_ocr.cli` when the CLI executable is not on PATH.
+Core dependencies: httpx, pydantic, pypdf, platformdirs and python-dotenv. PDF postprocessing uses PyMuPDF. Full table-aware preflight and automatic routing require the `local` extra. The optional `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family; pip resolves its transitive dependencies. No additional OCR engine, LLM service or second local table parser is required. Dependencies are installed into the existing authorized Python environment, not copied into the skill. `doctor` does not install anything; use `python -m mineru_ocr.cli` when the CLI executable is not on PATH.
 
 ## Workflow
 
@@ -90,17 +91,19 @@ Move the Markdown and referenced `images/` together. No sidecar is required for 
 
 At its recorded location, `validate --work-dir processing` checks recorded hashes, evidence, reports, references and generated anchors. After relocation without records it reports `validation_scope: references`: existence and anchor checks only, not historical integrity verification. Automatic rebinding of relocated records is not implemented.
 
-Source-page checks are ordinary links such as `[Page 12](images/<hash>.png)`. Figure embeds use `![Figure 1](images/<hash>.png)`. HTML tables and math still depend on reader support.
+Figure embeds use `![Figure 1](images/<hash>.png)`. Source-page mappings stay in the processing records; default delivery does not duplicate PDF pages as images. Only explicit `--edition reading` renders the full-page verification gallery. HTML tables and math still depend on reader support.
 
 ## Fidelity boundaries
 
-Simple rectangular tables with explicit or source-reviewed headers can become GFM pipe tables after cell round-trip checks. Merged cells, multiple headers and rich content retain HTML. Use `--table-format html` to retain every HTML table.
+Simple rectangular tables with explicit headers, source-reviewed headers or a complete textual first row can become GFM pipe tables after cell round-trip checks. For all-td tables, the first textual row is conventionally treated as a header and this basis is recorded; it is not semantic header recognition. Column count and text length alone do not prevent conversion. Merged cells, multiple headers and rich content retain HTML. Use `--table-format html` to retain every HTML table.
 
 Reviewed text corrections require exact before/after strings, expected counts, physical PDF pages and reasons. Layout-backed running-header cleanup and heading normalization protect tables, display math and fenced code. Unknown positions stay unknown.
 
 Image removal requires the input and image hashes, explicit lines, an invalid-block kind, `independent: true` and a reason. Repetition, size or page position alone is insufficient. Informative approval/version/source marks remain. Original files and complete source-page evidence are retained. Deduplication compares bytes, not inferred meaning.
 
 Structural validation is not a measured OCR accuracy score. Inspect representative formulas, complex/continued tables, figures with units and appendix boundaries.
+
+Preflight warnings do not bypass publication checks. Undecodable source glyphs cannot be silently dropped to pass; unresolved characters still reject the native candidate. See the [exact preflight thresholds](docs/readable-workflow.md) (Chinese).
 
 ## Jobs and limits
 
@@ -115,6 +118,8 @@ The client plans up to 200 pages per range and physically splits PDFs above its 
 Without `process --output-dir`, cloud processing returns a raw `.mineru` bundle; local processing returns an immutable raw bundle under `--work-dir/native/<run-id>` (default: the processing cache). Rejected local candidates and their quality reports remain there for diagnosis. Retain timed-out cloud job IDs and resume; do not resubmit unnecessarily. Use `clean JOB_ID` only for intentionally discarded cloud job data.
 
 ## Development and migration
+
+Version 0.4.2 passed **147 offline tests** and screened 10 real PDFs (400 pages). One eligible native sample was subsequently rejected for formatting/symbol issues; no live cloud OCR was run. Details and limits are in the [0.4.2 validation record](docs/v0.4.2-validation.md).
 
 Version 0.4.1 passed **110 offline tests**, including all-page routing, no-upload local mode, dependency/runtime failures, native publication, blank-page preservation, numeric/symbol/script-formatting checks and independent merged-cell rejection. See the [0.4.1 validation record](docs/v0.4.1-validation.md).
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 — 2026-09-23
+
+- Route complex/irregular, image-based and uncertain tables to cloud during preflight. Reuse the pinned Layout image model, source ruling geometry and aligned raster-text hints; no new dependency, local OCR or semantic enrichment service.
+- Complete basic checks on every page, but skip remaining model inference once a whole-document cloud route is established; report skipped table checks explicitly.
+- Cache simple source table cells for basic acceptance; remove repeated post-extraction detection and general span-matrix reconstruction. Retain page, text, numeric, symbol and abnormal-character safeguards.
+- Convert simple all-td tables using a recorded textual-first-row header convention. Remove width/cell-length cutoffs; preserve merged/multi-header/rich tables and ambiguous headers as HTML.
+- Update the reusable/global skill, bilingual documentation and regression fixtures. Record real-file routing checks and known heuristic limitations.
+
+- Prefer native-text PDF attempts by separating preflight warnings from blocking findings. Allow short titles, isolated mapping defects, minority hidden text and illustrated native pages; retain scan/header and serious-corruption safeguards. Report visible text, mapping/hidden ratios and warning pages without adding dependencies.
+- Ignore off-page glyphs and duplicate overpainting in visible-text counts so a repeatedly painted scan header cannot masquerade as a native body.
+- Reject native candidates that silently drop unresolved source glyphs, and check non-whitespace control characters in extracted output. Local-only and dependency/runtime failure paths still never upload.
+- Fix default source editions copying full-page PDF screenshots into delivery and inserting repetitive verification links. Keep only body resources in `images/`; preserve source hashes, page mappings and the original input in separate processing records. Full-page images require explicit `--edition reading`.
+- Retain native physical-page markers without rasterizing blank pages; record table/formula source matches separately from optional visible links.
+
 ## 0.4.1 — 2026-09-21
 
 - Add offline all-page PDF preflight and `doctor` runtime checks with actionable installation guidance.

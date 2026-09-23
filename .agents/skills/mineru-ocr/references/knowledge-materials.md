@@ -2,7 +2,7 @@
 
 ## Portable delivery
 
-- Main Markdown contains extraction or a labeled conservative source/reading edition.
+- Main Markdown contains extraction or a conservative source/reading edition. Default source delivery creates no full-page PDF screenshots or repetitive verification links; full-page galleries require explicit reading editions.
 - Referenced resources live under `images/` and use relative Markdown/HTML links. Images use their byte SHA-256 plus extension; native SVG is retained.
 - Each valid repeated occurrence and original caption remains. Exact byte duplicates share a stored file; visually similar drawings are not automatically merged.
 - Copy Markdown and its images together. No manifest, custom reader plugin or internal report is required for reading and basic downstream ingestion.
@@ -33,7 +33,7 @@ Pages are one-based physical PDF pages, not printed labels. Legacy Content List 
 
 `evidence_ref` points to internal retained JSON plus a pointer. Other recognized evidence formats are retained without guessing unsupported schemas.
 
-Portable citations use document title/number, original clause or figure captions, explicit anchors where available and source-page image links. Internal identities are optional machine provenance, not universal citation syntax.
+Portable citations use document title/number, original clause or figure captions, explicit anchors where available. Source-page image links exist only in an explicitly requested reading edition. Internal identities are optional machine provenance, not universal citation syntax.
 
 ## Downstream boundary
 

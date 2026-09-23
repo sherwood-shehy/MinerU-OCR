@@ -188,7 +188,7 @@ def test_pdf_postprocessing_applies_review_before_cropping(tmp_path):
     result = prepare_readable(bundle, pdf, tmp_path / 'out', review_file=review)
     assert result['review']['image_actions'][0]['lines'] == [1]
     assert '![logo]' not in Path(result['markdown']).read_text(encoding='utf-8')
-    assert not any(digest_file(p) == digest_file(bundle / 'logo.png') for p in (tmp_path / 'out/images').iterdir())
+    assert not any(digest_file(p) == digest_file(bundle / 'logo.png') for p in (tmp_path / 'out/images').glob('*'))
 
 
 @pytest.mark.parametrize('args', [['enhance', 'input.md'], ['process', 'input.pdf', '--enhance'],

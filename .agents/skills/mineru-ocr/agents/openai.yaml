@@ -1,4 +1,4 @@
 interface:
   display_name: "MinerU OCR"
-  short_description: "Local PDF preflight, cloud OCR and faithful portable Markdown"
-  default_prompt: "Use $mineru-ocr to preflight this PDF, select local extraction or authorized cloud OCR, and produce faithful Markdown with relative images, conservative tables and source-page links; preserve review evidence outside delivery and report actual checks and gaps."
+  short_description: "Table-aware PDF routing and faithful portable Markdown"
+  default_prompt: "Use $mineru-ocr to preflight this PDF for text and table risks, select local extraction or authorized cloud OCR, and produce faithful Markdown with relative images, simple Markdown tables and preserved complex HTML tables; preserve review evidence outside delivery and report actual checks and gaps."

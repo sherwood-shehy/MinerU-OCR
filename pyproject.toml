@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mineru-ocr-skill"
-version = "0.4.1"
+version = "0.4.2"
 description = "Faithful Markdown materials with local PDF preflight and MinerU cloud fallback"
 requires-python = ">=3.11"
 dependencies = [

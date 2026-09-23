@@ -14,9 +14,11 @@ from urllib.parse import quote, unquote
 
 from .environment import LOCAL_VERSION, require_local, require_pdf
 from .errors import MinerUOCRError
-from .preflight import preflight_pdf
+from .preflight import _bad_character, preflight_pdf
 from .provenance import build_manifest, digest_file
 from .references import references, rewrite_references
+from .table_routing import inspect_page_tables
+from .tables import TableParser, cell_text
 
 TABLE = re.compile(r'<table\b.*?</table>', re.S | re.I)
 EQUATION = re.compile(r'\$\$.*?\$\$', re.S)
@@ -55,53 +57,7 @@ def _numbers(text: str) -> Counter:
     return Counter(re.findall(r'(?<![\d.])[+-]?\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?', text))
 
 
-class _Cells(_Text):
-    def __init__(self):
-        super().__init__()
-        self.cells, self.current = [], None
-        self.grid, self.row, self.column, self.anchor = {}, -1, 0, None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == 'tr':
-            self.row += 1
-            self.column = 0
-        elif tag in {'td', 'th'}:
-            attributes = dict(attrs)
-            rowspan, colspan = int(attributes.get('rowspan', 1)), int(attributes.get('colspan', 1))
-            if self.row < 0 or not 1 <= rowspan <= 1000 or not 1 <= colspan <= 1000:
-                raise ValueError('Invalid table span')
-            while (self.row, self.column) in self.grid:
-                self.column += 1
-            self.anchor = (self.row, self.column)
-            for row in range(self.row, self.row + rowspan):
-                for col in range(self.column, self.column + colspan):
-                    if (row, col) in self.grid:
-                        raise ValueError('Overlapping table span')
-                    self.grid[row, col] = None
-            self.current = []
-        elif tag == 'br' and self.current is not None:
-            self.current.append(' ')
-
-    def handle_data(self, data):
-        if self.current is not None:
-            self.current.append(data)
-
-    def handle_endtag(self, tag):
-        if tag in {'td', 'th'} and self.current is not None:
-            value = ''.join(''.join(self.current).split())
-            self.cells.append(value)
-            self.grid[self.anchor] = value
-            self.current = None
-
-    def matrix(self):
-        if not self.grid:
-            return []
-        height = max(r for r, _ in self.grid) + 1
-        width = max(c for _, c in self.grid) + 1
-        return [[self.grid.get((r, c), '') for c in range(width)] for r in range(height)]
-
-
-def check_page(page, markdown: str) -> dict:
+def check_page(page, markdown: str, *, table_inspection: dict | None = None) -> dict:
     # Sorted text rejoins same-line font fragments (e.g. "0.\n01") by their
     # physical positions, without guessing across separate lines or cells.
     source, extracted = page.get_text(sort=True), visible_text(markdown)
@@ -109,20 +65,22 @@ def check_page(page, markdown: str) -> dict:
     retained = sum((expected & actual).values()) / max(1, sum(expected.values()))
     missing_numbers = _numbers(unicodedata.normalize('NFKC', source)) - _numbers(extracted)
     added_numbers = _numbers(extracted) - _numbers(unicodedata.normalize('NFKC', source))
-    # Do not validate the layout model against its own inferred grids: a merged
-    # cell can be flattened identically in both calls. Check source ruling lines.
-    original_tables = page.find_tables(use_layout=False).tables
+    # Preflight already screened complex/uncertain grids. Reuse its simple
+    # source cells instead of rerunning detection or reconstructing span matrices.
+    inspection = table_inspection if table_inspection is not None else inspect_page_tables(page)
+    original_tables = inspection.get('simple_tables', [])
     extracted_tables = TABLE.findall(markdown)
-    table_cells_match = len(original_tables) == len(extracted_tables)
+    table_cells_match = not inspection.get('reasons') and len(original_tables) == len(extracted_tables)
     for original, converted in zip(original_tables, extracted_tables):
-        parser = _Cells()
+        parser = TableParser()
         try:
             parser.feed(converted)
-        except (ValueError, TypeError):
+            parser.close()
+        except (ValueError, TypeError, IndexError):
             table_cells_match = False
             continue
-        before = [[None if cell is None else ''.join(cell.split()) for cell in row] for row in original.extract()]
-        if before != parser.matrix():
+        after = [[''.join(cell_text(cell).split()) for cell in row] for row in parser.rows]
+        if parser.problem or parser.stack or original['cells'] != after:
             table_cells_match = False
     issues = []
     if expected and retained < .995:
@@ -136,7 +94,12 @@ def check_page(page, markdown: str) -> dict:
     actual_symbols = Counter(c for c in extracted if c in important)
     if expected_symbols != actual_symbols:
         issues.append('technical_symbol_change')
-    if any(c == '\ufffd' or unicodedata.category(c) in {'Co', 'Cs'} for c in extracted):
+    unresolved = sum(_bad_character(c) for c in source if not c.isspace())
+    if unresolved:
+        # Preflight now allows isolated mapping defects to reach a native
+        # attempt. Dropping an undecodable glyph is not evidence of recovery.
+        issues.append('unresolved_source_characters')
+    if any(_bad_character(c) for c in extracted if not c.isspace()):
         issues.append('unreliable_extracted_characters')
     suspect_scripts = []
     for match in re.finditer(r'<(sup|sub)\b[^>]*>(.*?)</\1>', markdown, re.S | re.I):
@@ -151,6 +114,7 @@ def check_page(page, markdown: str) -> dict:
             'character_retention': round(retained, 6), 'missing_numbers': dict(missing_numbers),
             'added_numbers': dict(added_numbers),
             'technical_symbols_preserved': expected_symbols == actual_symbols,
+            'unresolved_source_characters': unresolved,
             'suspect_script_spans': suspect_scripts,
             'source_tables': len(original_tables), 'extracted_tables': len(extracted_tables),
             'table_cells_match': table_cells_match}
@@ -158,7 +122,7 @@ def check_page(page, markdown: str) -> dict:
 
 def extract_native(pdf: str | Path, directory: Path, *, preflight: dict | None = None) -> dict:
     pdf = Path(pdf).resolve()
-    inspection = preflight or preflight_pdf(pdf)
+    inspection = preflight if preflight and preflight.get('schema_version') == '1.2' else preflight_pdf(pdf)
     if inspection['source_sha256'] != digest_file(pdf):
         raise MinerUOCRError('PDF changed after preflight')
     if inspection['recommended_engine'] != 'local':
@@ -207,8 +171,8 @@ def extract_native(pdf: str | Path, directory: Path, *, preflight: dict | None =
                     'bbox': None, 'coordinate_system': None, 'origin': 'pymupdf4llm',
                     'decode_checked': True, 'evidence_ref': f'evidence/pymupdf4llm-pages.json#/{number - 1}'})
             text = rewrite_references(text, replacements)
-            quality.append(check_page(doc[number - 1], text))
-            # Source markers are internal evidence, converted to ordinary page links in readable.
+            quality.append(check_page(doc[number - 1], text, table_inspection=inspection['pages'][number - 1]['tables']))
+            # Source markers retain physical pages without generating screenshots.
             texts.append(f'<!-- PDF source page {number} -->\n\n' + text.strip())
             blocks.append({'type': 'page', 'page': number})
             for table in TABLE.findall(text):
@@ -218,7 +182,7 @@ def extract_native(pdf: str | Path, directory: Path, *, preflight: dict | None =
             for line in text.splitlines():
                 if line.strip() and not line.lstrip().startswith(('<', '!', '|')):
                     blocks.append({'type': 'text', 'page': number, 'text': re.sub(r'^#{1,6}\s+', '', line.strip())})
-    report = {'passed': all(p['passed'] for p in quality), 'pages': quality,
+    report = {'passed': all(p['passed'] for p in quality), 'pages': quality, 'policy': 'basic_integrity',
               'limitations': ['Checks compare extraction results; they do not certify reading order, table-detector accuracy or semantic correctness.']}
     files += [{**evidence('quality.json', report), 'role': 'native_quality'},
               {**evidence('layout.json', blocks), 'role': 'normalized_layout',

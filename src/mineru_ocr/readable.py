@@ -266,7 +266,9 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         locations = {}
         page_paths = {}
         (stage / 'source-images').mkdir()
-        for index, page in enumerate(doc):
+        # Full-page rasters are an explicit reading-gallery feature. The default
+        # material package contains only resources needed by the source body.
+        for index, page in enumerate(doc if edition == 'reading' else ()):
             relative = f'source-images/page-{index + 1:03}.png'
             page.get_pixmap(matrix=fitz.Matrix(_scale(page), _scale(page)), alpha=False).save(stage / relative)
             fitz.Pixmap(str(stage / relative))  # verify the written raster can be decoded
@@ -356,6 +358,8 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
             if not numbers:
                 return value
             matched[kind] += 1
+            if edition == 'source':
+                return value
             label = '表格' if kind == 'table' else '公式'
             links = '、'.join(page_link(n) for n in numbers)
             adjacent = '（含邻近续表区域）' if len(numbers) > 1 else ''
@@ -363,7 +367,7 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         normalized = TABLE.sub(lambda m: verified(m, 'table'), normalized)
         normalized = EQUATION.sub(lambda m: verified(m, 'equation'), normalized)
         rendered = rewrite_references(normalized, replacements)
-        if native:
+        if native and edition == 'reading':
             rendered = re.sub(r'^<!-- PDF source page (\d+) -->$',
                               lambda m: '原文：' + page_link(int(m[1])), rendered, flags=re.M)
         labels = {path: '、'.join(locs[0].get('figure_captions', [])) or f'PDF第{locs[0]["page"]}页图像区域（图题待核实）'
@@ -407,7 +411,7 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
                 headings.append({'title': text, 'level': level, 'page': page, 'anchor': anchor})
             if level == 2:
                 navigation.append(f'- [{text}](#{anchor})')
-            location = '\n\n原文：' + page_link(page) if page else ''
+            location = '\n\n原文：' + page_link(page) if page and edition == 'reading' else ''
             return f'<a id="{anchor}"></a>\n\n{line}{location}'
         rendered, protected = protect_blocks(rendered)
         rendered = re.sub(r'^(?:#{1,6} .+|' + NUMBER + r'\s+[^\n]+)$', add_anchor, rendered, flags=re.M)
@@ -425,14 +429,15 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
                            f'<summary>PDF 第 {number} 页</summary>\n\n'
                            f'![原文 PDF 第 {number} 页]({relative})\n\n</details>\n')
         final_text = (intro + rendered + '\n'.join(gallery) if edition == 'reading' else
-                      f'# {document_title}\n\n<!-- 源材料整理版；原文核对链接指向 images 中的原页图像。 -->\n\n'
-                      + '[原文首页影像](' + page_paths[1] + ')\n\n' + rendered)
+                      f'# {document_title}\n\n' + rendered)
         audit.update({'heading_levels': dict(Counter(h['level'] for h in headings)), 'headings': headings,
                       'adjacent_table_region_links': continuations,
                       'source_figure_crops': figure_audit, 'source_page_images': len(page_paths),
                       'clause_locators': locator_index.items, 'locator_issues': locator_index.issues,
                       'table_decisions': table_decisions, 'table_header_reviews': header_reviews,
-                      'table_source_links': matched['table'], 'display_math_source_links': matched['equation'],
+                      'table_source_matches': matched['table'], 'display_math_source_matches': matched['equation'],
+                      'table_source_links': matched['table'] if edition == 'reading' else 0,
+                      'display_math_source_links': matched['equation'] if edition == 'reading' else 0,
                       'table_fragments': len(TABLE.findall(original)), 'display_math_blocks': len(EQUATION.findall(original)),
                       'tables_unchanged_from_original': TABLE.findall(original) == TABLE.findall(final_text),
                       'display_math_unchanged_from_original': EQUATION.findall(original) == EQUATION.findall(final_text),
@@ -467,7 +472,7 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
         metadata.setdefault('evidence_files', []).append({'path': 'evidence/readability-review.json',
                                                          'sha256': digest_file(audit_file), 'role': 'readability_audit'})
         metadata['asset_locations'] = locations
-        metadata['reading_edition'] = {'processor': 'mineru_ocr.readable', 'version': '3.0',
+        metadata['reading_edition'] = {'processor': 'mineru_ocr.readable', 'version': '4.0',
                                       'input_markdown_sha256': digest_file(source),
                                       'reviewed_correction_count': len(corrections)}
         staged_md = stage / 'reading.md'

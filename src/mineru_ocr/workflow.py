@@ -33,7 +33,7 @@ def process_documents(files: list[str], options, timeout: int, *, engine: str = 
         inspection = preflight_pdf(pdf) if engine != 'cloud' and pdf.suffix.lower() == '.pdf' else None
         selected = engine if engine != 'auto' else inspection['recommended_engine'] if inspection else 'cloud'
         if selected == 'local' and (inspection is None or inspection['recommended_engine'] != 'local'):
-            raise MinerUOCRError('Local-only mode requires every nonblank PDF page to pass preflight; no upload was made')
+            raise MinerUOCRError('Local-only mode requires usable native text and no blocking preflight findings; no upload was made')
         plans.append((pdf, selected, inspection))
     # Missing local dependencies are an environment problem, never a reason to upload silently.
     if any(selected == 'local' for _, selected, _ in plans):
