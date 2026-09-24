@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 — 2026-09-24
+
+- Exclude native dotted table-of-contents blocks from uncertain-table findings, including continuation pages and fragmented model proposals. Verify visible text, ordered/aligned page references and a heading or subsection identifiers; keep original model boxes and the exclusion evidence in preflight diagnostics.
+- Limit exclusions to contained regions without images or ruling. Other tables on the same page retain their normal routing; ambiguous contents layouts remain conservative cloud candidates. No new dependency or OCR call.
+
 ## 0.4.2 — 2026-09-23
 
 - Route complex/irregular, image-based and uncertain tables to cloud during preflight. Reuse the pinned Layout image model, source ruling geometry and aligned raster-text hints; no new dependency, local OCR or semantic enrichment service.

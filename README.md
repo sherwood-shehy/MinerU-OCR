@@ -1,10 +1,16 @@
-# MinerU OCR 0.4.2
+# MinerU OCR 0.4.3
 
 [简体中文](README_zh-CN.md) | English
 
 Convert original documents into **faithful, traceable, AI-readable Markdown material packages** for ordinary readers, LLM Wikis and RAG systems.
 
 A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud OCR, resumable jobs and conservative offline postprocessing. Knowledge synthesis, visual interpretation, embeddings and ingestion belong to downstream systems.
+
+## Changes in 0.4.3
+
+- Distinguish native dotted contents from uncertain tables using visible entries, aligned page numbers and their order. Recognize continuation pages and model proposals covering only a fragment of a verified contents block.
+- Apply exclusions only inside that block and record the evidence in preflight diagnostics. Images, ruling and other tables on the same page retain their existing routing. No new dependencies or OCR service calls.
+- The 19-page GB/T 33349—2016 sample now passes its two contents pages and correctly routes to cloud at the merged table on physical page 8. See the [0.4.3 validation record](docs/v0.4.3-validation.md).
 
 ## Changes in 0.4.2
 
@@ -50,6 +56,8 @@ mineru-ocr process input.pdf --engine local --output-dir delivery --work-dir pro
 ```
 
 `process --engine auto` may upload when cloud processing is selected; configure a token only when that branch is needed. `--engine local` fails rather than uploading an ineligible or rejected PDF. Office inputs use cloud. `submit`, `status` and `resume` remain cloud job operations. `MINERU_API_TOKEN` overrides the local plaintext user configuration; `config show` reports status only. Model/language/OCR flags apply to the cloud backend; the local backend always disables OCR and extracts tables.
+
+Preflight distinguishes native dotted contents blocks from table proposals using visible entries and aligned, ordered page numbers. It also handles continuation pages and model boxes covering only part of a verified contents block. Exclusions are recorded in `tables.non_table_regions`; they do not exempt other tables on that page. Missing leaders, ambiguous rows, images or ruling keep the conservative route. See the [routing details](docs/readable-workflow.md) (Chinese).
 
 With `--output-dir`, adapted PDF results receive source-page postprocessing automatically. Results without supported layout evidence receive portable publication with an explicit limitation. Use `--review-file`, `--name` and `--title` only with one input and `--output-dir`. For source-bound image review, first retain the raw result, run `inspect-images`, then use `readable` on that exact result; do not rerun extraction against an old review hash.
 
@@ -118,6 +126,8 @@ The client plans up to 200 pages per range and physically splits PDFs above its 
 Without `process --output-dir`, cloud processing returns a raw `.mineru` bundle; local processing returns an immutable raw bundle under `--work-dir/native/<run-id>` (default: the processing cache). Rejected local candidates and their quality reports remain there for diagnosis. Retain timed-out cloud job IDs and resume; do not resubmit unnecessarily. Use `clean JOB_ID` only for intentionally discarded cloud job data.
 
 ## Development and migration
+
+Version 0.4.3 passed **166 offline tests**, including 19 new contents regressions and checks using the pinned layout model. The real PDF retest used local preflight only. See the [0.4.3 validation record](docs/v0.4.3-validation.md).
 
 Version 0.4.2 passed **147 offline tests** and screened 10 real PDFs (400 pages). One eligible native sample was subsequently rejected for formatting/symbol issues; no live cloud OCR was run. Details and limits are in the [0.4.2 validation record](docs/v0.4.2-validation.md).
 

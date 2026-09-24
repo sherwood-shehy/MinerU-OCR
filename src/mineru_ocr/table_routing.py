@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+import re
 from threading import Lock
+import unicodedata
 
 from .environment import require_local, require_pdf
 from .errors import MinerUOCRError
@@ -87,6 +89,92 @@ def _image_overlap(table, image) -> float:
     return (region & fitz.Rect(image)).get_area() / max(1, region.get_area())
 
 
+def _visible_text_rows(page) -> list[list[tuple]]:
+    """Reassemble visible glyphs by baseline, not PDF stream/fragment order."""
+    fitz = require_pdf()
+    bounds = page.rect * page.derotation_matrix
+    glyphs = set()
+    for span in page.get_texttrace():
+        if span.get('type') == 3 or span.get('opacity', 1) <= .01 or span['dir'][0] < .99:
+            continue
+        for codepoint, _, origin, bbox in span['chars']:
+            if (0 <= codepoint <= 0x10ffff and not chr(codepoint).isspace()
+                    and not (fitz.Rect(bbox) & bounds).is_empty):
+                glyphs.add((origin[0], origin[1], chr(codepoint), tuple(bbox)))
+    rows = []
+    for glyph in sorted(glyphs, key=lambda g: (g[1], g[0])):
+        # Dots and page numbers can have a slightly different font baseline.
+        if not rows or glyph[1] - rows[-1][0][1] > 2.5:
+            rows.append([])
+        rows[-1].append(glyph)
+    return [sorted(row) for row in rows]
+
+
+def _contents_regions(rows, drawings, image_boxes) -> list[dict]:
+    """Find native dotted contents blocks independently of model fragments.
+
+    Require aligned, ordered page references on every row. Without a heading,
+    continuation pages additionally need predominantly subsection identifiers.
+    Only proposals contained in a verified block may later be exempted.
+    """
+    fitz = require_pdf()
+    titles = {'目次', '目录', '目錄', 'contents', 'tableofcontents'}
+    title_baselines, runs, run = [], [], []
+    for row in rows:
+        value = unicodedata.normalize('NFKC', ''.join(g[2] for g in row))
+        if value.lower() in titles:
+            title_baselines.append(row[0][1])
+        match = re.fullmatch(r'(.+?)[.·⋯]{3,}([0-9]{1,4}|[IVXLCDMivxlcdm]+)', value)
+        entry = None
+        if (match and sum(c.isalpha() for c in match[1]) >= 2
+                and not re.search(r'[.·⋯]{3,}', match[1])):
+            label, number = match.groups()
+            if number.isdigit():
+                ordinal = (1, int(number))
+            else:
+                number = number.upper()
+                if re.fullmatch(r'M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})', number):
+                    values = [dict(I=1, V=5, X=10, L=50, C=100, D=500, M=1000)[c] for c in number]
+                    ordinal = (0, sum(-n if i + 1 < len(values) and n < values[i + 1] else n
+                                      for i, n in enumerate(values)))
+                else:
+                    ordinal = None
+            if ordinal is not None:
+                entry = (row, label, ordinal)
+        if run and (entry is None or row[0][1] - run[-1][0][0][1] > 40):
+            runs.append(run)
+            run = []
+        if entry:
+            run.append(entry)
+    if run:
+        runs.append(run)
+    result = []
+    for run in runs:
+        if len(run) < 3:
+            continue
+        glyphs = [g for row, _, _ in run for g in row]
+        box = fitz.Rect(min(g[3][0] for g in glyphs), min(g[3][1] for g in glyphs),
+                        max(g[3][2] for g in glyphs), max(g[3][3] for g in glyphs))
+        entries = [ordinal for _, _, ordinal in run]
+        right_edges = [row[-1][3][2] for row, _, _ in run]
+        titled = any(box.y0 - 120 <= y < run[0][0][0][1] for y in title_baselines)
+        subsections = sum(bool(re.match(r'^\d+(?:\.\d+)+[^\d.]', label)) for _, label, _ in run)
+        if (entries != sorted(entries) or (not titled and subsections < len(run) * .8)
+                or min(right_edges) < box.x0 + box.width * .75
+                or max(right_edges) - min(right_edges) > max(6, box.width * .02)):
+            continue
+        # Modest model-edge tolerance cannot include images or table ruling.
+        box += (-8, -8, 8, 8)
+        if any((box & fitz.Rect(image)).get_area() > 0 for image in image_boxes):
+            continue
+        if any('s' in path['type'] and box.intersects(path['rect'] + (-1, -1, 1, 1))
+               and max(path['rect'].width, path['rect'].height) > 10 for path in drawings):
+            continue
+        result.append({'kind': 'table_of_contents', 'basis': 'native_leaders_and_ordered_page_references',
+                       'entry_count': len(run), 'heading_present': titled, 'contents_bbox': list(box)})
+    return result
+
+
 def inspect_page_tables(page, image_boxes=None) -> dict:
     """Accept clear ruled grids; route merged, raster and uncertain tables away.
 
@@ -98,7 +186,8 @@ def inspect_page_tables(page, image_boxes=None) -> dict:
     drawings = page.get_drawings()
     tables = list(page.find_tables(paths=drawings, use_layout=False).tables)
     regions = visual_table_regions(page, image_boxes)
-    findings, simple = [], []
+    findings, simple, non_tables = [], [], []
+    contents_regions = None
     for table in tables:
         cells = table.extract()
         problems = []
@@ -131,11 +220,19 @@ def inspect_page_tables(page, image_boxes=None) -> dict:
         reason = ('suspected_image_table' if region.get('suspected') else
                   'image_table' if any(_image_overlap(region['bbox'], image) >= .2 for image in image_boxes)
                   else 'uncertain_table_structure')
+        if reason == 'uncertain_table_structure':
+            if contents_regions is None:
+                contents_regions = _contents_regions(_visible_text_rows(page), drawings, image_boxes)
+            contents = next((c for c in contents_regions
+                             if require_pdf().Rect(c['contents_bbox']).contains(region['bbox'])), None)
+            if contents:
+                non_tables.append({**region, **contents})
+                continue
         findings.append({**region, 'reasons': [reason]})
     # Nested/overlapping grids cannot be treated as independent simple tables.
     for i, first in enumerate(tables):
         if any(_overlap(first.bbox, second.bbox) > .2 for second in tables[i + 1:]):
             findings.append({'bbox': list(first.bbox), 'reasons': ['complex_table']})
     return {'status': 'checked', 'simple_tables': simple, 'findings': findings,
-            'visual_table_regions': regions,
+            'visual_table_regions': regions, 'non_table_regions': non_tables,
             'reasons': sorted({reason for item in findings for reason in item['reasons']})}

@@ -2,7 +2,7 @@
 name: mineru-ocr
 description: Convert PDFs and small Office documents into faithful Markdown with relative images and source traceability. Preflight PDFs for local PyMuPDF4LLM extraction or MinerU Cloud OCR, then review and postprocess into portable materials for readers, LLM Wikis and RAG systems.
 metadata:
-  version: "0.4.2"
+  version: "0.4.3"
 ---
 
 # MinerU OCR
@@ -30,6 +30,8 @@ mineru-ocr readable RESULT_DIRECTORY_OR_MD --source-pdf INPUT.pdf --output-dir D
 ```
 
 Preflight every PDF page. Prefer local extraction only for usable native text with no complex, image-based or uncertain table finding. Reuse the pinned local Layout runtime for offline visual table screening; do not introduce a separate OCR/LLM service. Merged/irregular grids, suspected borderless raster tables and model table regions without a reliable native grid route the whole PDF to cloud. Ordinary illustrations alone do not. Table detection is heuristic: check representative complex/continued tables after extraction.
+
+Native dotted contents may be excluded from model table proposals when visible entries, ordered/aligned page references and heading or subsection evidence agree. Check `tables.non_table_regions` for the recorded basis, including continuation pages and fragmented proposals. Exclusions apply only inside verified contents blocks without images or ruling; other tables and ambiguous layouts keep their normal route. A contents heading alone never exempts a page.
 
 Distinguish blocking `reasons` from review `warnings`: short titles, isolated mapping defects and minority hidden text can proceed locally; textless pages, substantial corruption, predominantly hidden text or scans with small headers block. Report actual blocking reasons. Basic checks cover every page; table-model screening stops once the whole file needs cloud, with remaining table checks marked skipped_document_cloud. Local OCR stays disabled. Local acceptance reuses cached simple table cells and checks page coverage, text, numbers and technical symbols; it does not reconstruct complex tables. Preserve the candidate/report if basic integrity checks trigger auto cloud fallback. Missing dependencies or runtime failures stop without uploading. `--engine local` never uploads, including when preflight detects table risks. Office and explicit `--engine cloud` use the existing cloud path.
 
