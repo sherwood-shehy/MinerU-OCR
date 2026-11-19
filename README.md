@@ -40,7 +40,7 @@ Download the matching files from the [v1.0 GitHub Release](https://github.com/sh
 - [CLI wheel (`mineru_ocr_skill-1.0-py3-none-any.whl`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
 - [Agent Skill ZIP (`mineru-ocr-skill-v1.0.zip`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
 
-For daily use, install the versioned wheel with the `local` extra in a dedicated Python environment, then install the matching skill ZIP in your agent's user skill directory. Run conversions from the workspace that contains the input documents. See [installation, upgrades and rollback](docs/install.md) for Windows commands and validation steps (Chinese).
+For daily use, reuse the host's existing Python 3.11+ environment and any installed packages that meet the requirements. Install the release wheel with `[local]` by default to enable PDF preflight, automatic routing, and local extraction. Use an isolated environment only if a dependency conflict or host installation restriction prevents reuse. Install the matching skill ZIP in your agent's user skill directory and run conversions from the workspace that contains the input documents. [Windows installation, upgrades, and rollback (Chinese)](docs/install.md)
 
 ## Workflow
 
@@ -124,7 +124,7 @@ Without `process --output-dir`, cloud processing returns a raw `.mineru` bundle;
 
 ## Development and migration
 
-For development, use a separate Python 3.11+ environment. From the repository root, run `python -m pip install -e ".[test,local]"`. The `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family and enables table-aware preflight, local extraction and PDF postprocessing.
+For development with the host Python, add the checkout's `src` directory to `PYTHONPATH` for the development process. If you need an editable install alongside the installed release, use a separate environment and run `python -m pip install -e ".[test,local]"` from the repository root. The `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family and enables table-aware preflight, local extraction and PDF postprocessing.
 
 Version 0.4.3 passed **166 offline tests**, including 19 new contents regressions and checks using the pinned layout model. The real PDF retest used local preflight only. See the [0.4.3 validation record](docs/v0.4.3-validation.md).
 

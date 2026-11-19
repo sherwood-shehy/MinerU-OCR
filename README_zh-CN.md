@@ -40,7 +40,7 @@
 - [CLI wheel（`mineru_ocr_skill-1.0-py3-none-any.whl`）](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
 - [Agent Skill ZIP（`mineru-ocr-skill-v1.0.zip`）](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
 
-日常使用时，在独立 Python 环境中安装带 `[local]` 依赖的版本化 wheel，再把同版本的 skill ZIP 安装到 Agent 的用户级技能目录。转换任务在存放原件的业务工作空间执行。Windows 安装命令、验收、升级和回退见[安装与升级说明](docs/install.md)。
+日常使用优先复用宿主机已有的 Python 3.11+ 环境和满足版本要求的依赖。默认安装带 `[local]` 的发布版 wheel，以支持 PDF 预检、自动分流和本地提取。只有依赖冲突或宿主机安装限制导致无法复用时，才使用独立环境。将同版本的 Skill ZIP 安装到 Agent 的用户级技能目录，在存放原件的业务工作空间执行转换。 [Windows 安装、升级与回退](docs/install.md)
 
 ## 使用
 
@@ -130,7 +130,7 @@ PDF 按最多 200 页规划区间；超过本客户端 200 MB 阈值时物理拆
 
 ## Skill、验证与迁移
 
-开发时使用独立的 Python 3.11+ 环境，在仓库根目录运行 `python -m pip install -e ".[test,local]"`。`local` 依赖组固定已验证的 PyMuPDF、PyMuPDF4LLM 和 Layout 1.28.2，支持表格预检、本地提取和 PDF 后处理。
+使用宿主机 Python 开发时，将当前仓库的 `src` 加入开发进程的 `PYTHONPATH`。若确实需要让 editable 安装与已装的发布版并存，则使用独立环境，在仓库根目录运行 `python -m pip install -e ".[test,local]"`。`local` 依赖组固定已验证的 PyMuPDF、PyMuPDF4LLM 和 Layout 1.28.2，支持表格预检、本地提取和 PDF 后处理。
 
 0.4.3 通过 **166 项离线测试**，其中新增 19 项目录回归，包含固定版 Layout 模型实测；原文件仅重新执行本地预检。详见 [0.4.3 验收记录](docs/v0.4.3-validation.md)。
 
