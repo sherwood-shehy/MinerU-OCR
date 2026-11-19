@@ -13,6 +13,7 @@ import tempfile
 from types import SimpleNamespace
 import zipfile
 
+from .environment import require_pdf
 from .errors import MinerUOCRError
 from .provenance import _page_number, build_manifest, digest_file, manifest_path
 from .publish import publish_output, source_for_processing
@@ -180,10 +181,7 @@ def prepare_readable(path: str | Path, source_pdf: str | Path, output_dir: str |
                      edition: str | None = None, table_format: str | None = None,
                      target_project: Path | None = None, source_id: str | None = None,
                      work_dir: Path | None = None) -> dict:
-    try:
-        import pymupdf as fitz
-    except ImportError as exc:
-        raise MinerUOCRError('Reading editions require the optional PyMuPDF dependency') from exc
+    fitz = require_pdf()
     if profile not in {'generic', 'gas-std-wiki'}:
         raise MinerUOCRError('Unknown delivery profile')
     edition = edition or 'source'

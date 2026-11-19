@@ -35,14 +35,12 @@ Version 1.1 publishes multiple Markdown files into one delivery directory with s
 
 ## Installation and upgrades
 
-Build the 1.1 wheel and Skill ZIP from the same source revision. [Build and installation guide (Chinese)](docs/install.md)
+Download the matching CLI and Skill files from the [v1.1 GitHub Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.1).
 
-The existing v1.0 files are available from the [v1.0 GitHub Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0).
+- [CLI wheel (`mineru_ocr_skill-1.1-py3-none-any.whl`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.1/mineru_ocr_skill-1.1-py3-none-any.whl)
+- [Agent Skill ZIP (`mineru-ocr-skill-v1.1.zip`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.1/mineru-ocr-skill-v1.1.zip)
 
-- [CLI wheel (`mineru_ocr_skill-1.0-py3-none-any.whl`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
-- [Agent Skill ZIP (`mineru-ocr-skill-v1.0.zip`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
-
-For daily use, reuse the host's existing Python 3.11+ environment and any installed packages that meet the requirements. Install the release wheel with `[local]` by default to enable PDF preflight, automatic routing, and local extraction. Use an isolated environment only if a dependency conflict or host installation restriction prevents reuse. Install the matching skill ZIP in your agent's user skill directory and run conversions from the workspace that contains the input documents. [Windows installation, upgrades, and rollback (Chinese)](docs/install.md)
+For daily use, reuse the host's existing Python 3.11+ environment. Run `python -m pip install "PATH_TO_WHEEL"` with the selected interpreter. The 1.1 wheel declares the PDF components needed for preflight, automatic routing, and local extraction. Pip reuses installed packages that meet the requirements. Use an isolated environment only if a dependency conflict or host installation restriction prevents reuse. Install the matching skill ZIP in your agent's user skill directory and run conversions from the workspace that contains the input documents. [Windows installation, upgrades, and rollback (Chinese)](docs/install.md)
 
 ## Workflow
 
@@ -75,7 +73,7 @@ The review file is optional. `inspect-images` returns an inventory, a local Mark
 
 ## Delivery and processing records
 
-The cleanup behavior below applies to builds from the current source. For the published v1.0 wheel, see the [v1.0 delivery instructions](https://github.com/sherwood-shehy/MinerU-OCR/blob/v1.0/README.md#delivery-and-processing-records).
+For the earlier release, see the [v1.0 delivery instructions](https://github.com/sherwood-shehy/MinerU-OCR/blob/v1.0/README.md#delivery-and-processing-records).
 
 ```text
 delivery/
@@ -132,7 +130,7 @@ Without `process --output-dir`, the command returns and retains a raw bundle for
 
 ## Development and migration
 
-For development with the host Python, add the checkout's `src` directory to `PYTHONPATH` for the development process. If you need an editable install alongside the installed release, use a separate environment and run `python -m pip install -e ".[test,local]"` from the repository root. The `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family and enables table-aware preflight, local extraction and PDF postprocessing.
+For development with the host Python, add the checkout's `src` directory to `PYTHONPATH` for the development process. If you need an editable install alongside the installed release, use a separate environment and run `python -m pip install -e ".[test]"` from the repository root. The required dependencies pin the tested PyMuPDF, PyMuPDF4LLM, and PyMuPDF Layout versions at 1.28.2.
 
 Version 0.4.3 passed **166 offline tests**, including 19 new contents regressions and checks using the pinned layout model. The real PDF retest used local preflight only. See the [0.4.3 validation record](docs/v0.4.3-validation.md).
 

@@ -4,7 +4,7 @@
 
 ## 获取同版本发布包
 
-从维护者获取同一版本的 wheel 和 Skill ZIP。发布附件可从 GitHub Releases 的对应版本页面下载。以下使用 1.1 的文件名。 [GitHub Releases](https://github.com/sherwood-shehy/MinerU-OCR/releases)
+从 GitHub 下载同一版本的 wheel 和 Skill ZIP。以下使用 1.1 的文件名。 [v1.1 Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.1)
 
 | 发布产物 | 文件名 |
 | --- | --- |
@@ -34,23 +34,23 @@ $runtimePython = (Get-Command python -CommandType Application -ErrorAction Stop 
 & $runtimePython -m mineru_ocr.cli doctor
 ```
 
-如果 CLI 版本与 Skill 匹配，并且 `doctor` 的 `pdf_ready` 和 `local_ready` 均为 `true`，即可直接复用。需要安装或补齐依赖时，将 `$releaseDir` 改为发布包所在目录，用同一个解释器安装带 `[local]` 的 wheel。
+如果 CLI 版本与 Skill 匹配，并且 `doctor` 的 `pdf_ready` 和 `local_ready` 均为 `true`，即可直接复用。需要安装或补齐依赖时，将 `$releaseDir` 改为发布包所在目录，用同一个解释器直接安装 wheel。
 
 ```powershell
 $releaseDir = 'C:\path\to\mineru-ocr-v1.1'
 $wheel = Join-Path $releaseDir 'mineru_ocr_skill-1.1-py3-none-any.whl'
-& $runtimePython -m pip install "${wheel}[local]"
+& $runtimePython -m pip install $wheel
 & $runtimePython -m mineru_ocr.cli --version
 & $runtimePython -m mineru_ocr.cli doctor
 ```
 
-`pip` 会复用已安装且符合版本要求的依赖。`[local]` 是日常安装的默认项，提供 PDF 表格预检、自动分流、本地提取和后处理所需组件。安装后确认 `pdf_ready` 和 `local_ready` 均为 `true`。明确只运行云端 OCR 任务时，可以安装基础 wheel，有 PDF 页面级后处理需求时加 `[readable]`。
+`pip` 会复用选定解释器已能访问且符合版本要求的依赖。1.1 的必装依赖包含 PyMuPDF、PyMuPDF4LLM 和 PyMuPDF Layout，三者均为 1.28.2，支持 PDF 表格预检、自动分流、本地提取和后处理。安装后确认 `pdf_ready` 和 `local_ready` 均为 `true`。
 
 在同一 Windows 用户下，新 CLI 会读取现有用户配置。需要使用云端 OCR 且尚未配置时，运行 `& $runtimePython -m mineru_ocr.cli config set-token` 交互式录入。`MINERU_API_TOKEN` 若已设置，优先于配置文件。`config show` 只报告配置状态，本地转换无需 token。
 
 ### 依赖冲突或安装受限时
 
-如果共享环境已有其他版本的 PyMuPDF 系列组件，可用 `& $runtimePython -m pip install --dry-run "${wheel}[local]"` 查看安装计划。1.1 的 `[local]` 固定使用 PyMuPDF、PyMuPDF4LLM 和 PyMuPDF Layout 1.28.2。计划替换共享依赖时，先确认对其他项目的影响。
+如果共享环境已有其他版本的 PyMuPDF 系列组件，可用 `& $runtimePython -m pip install --dry-run $wheel` 查看安装计划。计划替换共享依赖时，先确认对其他项目的影响。
 
 宿主机的安装限制或依赖冲突导致无法复用时，先查找已有的兼容环境。确实需要隔离且经用户确认后，可以用宿主机选定的 Python 创建一套由多个 Agent 共用的独立环境。随后用该环境的解释器继续验收和配置 Skill。
 
@@ -58,7 +58,7 @@ $wheel = Join-Path $releaseDir 'mineru_ocr_skill-1.1-py3-none-any.whl'
 $runtime = Join-Path $env:LOCALAPPDATA 'mineru-ocr-runtime'
 & $runtimePython -m venv $runtime
 $runtimePython = Join-Path $runtime 'Scripts\python.exe'
-& $runtimePython -m pip install "${wheel}[local]"
+& $runtimePython -m pip install $wheel
 & $runtimePython -m mineru_ocr.cli doctor
 ```
 
@@ -89,4 +89,4 @@ $runtimePython = Join-Path $runtime 'Scripts\python.exe'
 
 ## 升级与回退
 
-升级前保留当前 wheel 和配套 skill ZIP。用同一个 `$runtimePython` 安装目标版本的 wheel，默认带上 `[local]`，再替换全局 Skill 副本。如果安装计划涉及替换共享依赖，按上面的冲突处理方式确认。切换后重新检查命令版本、`doctor` 和业务目录中的本地转换。回退时用同样方式装回上一版 wheel 和对应的 Skill ZIP。安装与回退沿用用户 token 配置。
+升级前保留当前 wheel 和配套 Skill ZIP。用同一个 `$runtimePython` 安装目标版本的 wheel，再替换全局 Skill 副本。如果安装计划涉及替换共享依赖，按上面的冲突处理方式确认。切换后重新检查命令版本、`doctor` 和业务目录中的本地转换。回退时，按目标版本的安装说明装回配套的 wheel 和 Skill ZIP。安装与回退沿用用户 token 配置。

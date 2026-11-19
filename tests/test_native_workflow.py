@@ -252,7 +252,8 @@ def test_doctor_reports_missing_dependency_without_installing(monkeypatch):
     monkeypatch.setattr(environment.metadata, 'version', version)
     report = environment.doctor()
     assert not report['local_ready'] and report['packages']['pymupdf4llm'] is None
-    assert '[local]' in report['errors']['local']
+    assert 'python -m pip install "PATH_TO_WHEEL"' in report['errors']['local']
+    assert report['install_local'] in report['errors']['local']
 
 
 def test_same_line_font_fragments_do_not_look_like_numeric_changes():

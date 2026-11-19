@@ -9,8 +9,8 @@ from .errors import MinerUOCRError
 
 LOCAL_VERSION = '1.28.2'
 INSTALL_LOCAL = (
-    'In the CLI runtime, install the matching wheel with the [local] extra. '
-    'From a development checkout, run: python -m pip install -e ".[local]"'
+    'Install the matching wheel with the selected interpreter: python -m pip install "PATH_TO_WHEEL". '
+    'From a development checkout, run: python -m pip install -e .'
 )
 
 
