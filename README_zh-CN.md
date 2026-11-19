@@ -35,6 +35,11 @@
 
 ## 安装与升级
 
+从 [GitHub v1.0 Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0) 下载同版本的安装文件。
+
+- [CLI wheel（`mineru_ocr_skill-1.0-py3-none-any.whl`）](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
+- [Agent Skill ZIP（`mineru-ocr-skill-v1.0.zip`）](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
+
 日常使用时，在独立 Python 环境中安装带 `[local]` 依赖的版本化 wheel，再把同版本的 skill ZIP 安装到 Agent 的用户级技能目录。转换任务在存放原件的业务工作空间执行。Windows 安装命令、验收、升级和回退见[安装与升级说明](docs/install.md)。
 
 ## 使用

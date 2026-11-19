@@ -35,6 +35,11 @@ Version 1.0 aligns the CLI, Python package and Agent Skill versions and document
 
 ## Installation and upgrades
 
+Download the matching files from the [v1.0 GitHub Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0).
+
+- [CLI wheel (`mineru_ocr_skill-1.0-py3-none-any.whl`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
+- [Agent Skill ZIP (`mineru-ocr-skill-v1.0.zip`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
+
 For daily use, install the versioned wheel with the `local` extra in a dedicated Python environment, then install the matching skill ZIP in your agent's user skill directory. Run conversions from the workspace that contains the input documents. See [installation, upgrades and rollback](docs/install.md) for Windows commands and validation steps (Chinese).
 
 ## Workflow
