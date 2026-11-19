@@ -8,7 +8,10 @@ import sys
 from .errors import MinerUOCRError
 
 LOCAL_VERSION = '1.28.2'
-INSTALL_LOCAL = 'From the project checkout run: python -m pip install -e ".[local]"'
+INSTALL_LOCAL = (
+    'In the CLI runtime, install the matching wheel with the [local] extra. '
+    'From a development checkout, run: python -m pip install -e ".[local]"'
+)
 
 
 def require_pdf():

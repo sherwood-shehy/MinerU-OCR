@@ -1,10 +1,12 @@
-# MinerU OCR 0.4.3
+# MinerU OCR 1.0
 
 简体中文 | [English](README.md)
 
 将原始文档转换成**高还原度、可追溯、便于 AI 读取的 Markdown 素材包**，供不同 LLM Wiki、RAG 系统和普通 Markdown 阅读器使用。
 
 项目提供 Python CLI 和 Agent Skill：原生 PDF 可本地提取，扫描或不适合本地的文档使用 MinerU Cloud；两种结果共用保守后处理和交付校验。语义提炼、视觉问答、向量化、知识页生成由下游摄入流程完成。
+
+1.0 统一 CLI、Python 包与 Agent Skill 的版本号，并新增安装、升级和回退说明。
 
 ## 0.4.3 的变化
 
@@ -31,19 +33,9 @@
 - **移除额外的 AI 增强模块**。`enhance`、`--enhance`、`--enhance-best-effort`、豆包配置命令和生成 `.ai.jsonl` 的功能退役。已有成果与本机旧配置不会被升级操作自动删除。MinerU 自身的 OCR/VLM 模式保留。
 - gas-std-wiki 仅作为可选适配示例；普通转换不需要读取任何目标知识库。
 
-## 安装与环境
+## 安装与升级
 
-需要 Python 3.11+；本项目在现有 Python 3.12.2 环境验证。遵守宿主的 Python 和依赖安装约定，不隐式创建虚拟环境。
-
-```powershell
-python -m pip install -e ".[local]"       # 推荐：预检、本地/云端与 PDF 后处理
-python -m pip install -e .                # 仅云端基础功能
-python -m pip install -e ".[readable]"    # 云端 + PDF 后处理
-python -m pip install -e ".[test,local]"  # 开发与完整离线测试
-python -m mineru_ocr.cli doctor
-```
-
-核心依赖为 httpx、pydantic、pypdf、platformdirs、python-dotenv；PDF 后处理使用 PyMuPDF。完整表格预检与自动分流需要 `local` 依赖组；该组固定已验证的 PyMuPDF、PyMuPDF4LLM、Layout 1.28.2，由 pip 安装其必要传递依赖。无需额外的本地 OCR 引擎、大模型接口或另一套表格解析库。标准库随 Python 提供，第三方库安装到经授权的现有 Python 环境，不打包进 skill 文件夹。若命令不在 PATH，可使用 `python -m mineru_ocr.cli`。
+日常使用时，在独立 Python 环境中安装带 `[local]` 依赖的版本化 wheel，再把同版本的 skill ZIP 安装到 Agent 的用户级技能目录。转换任务在存放原件的业务工作空间执行。Windows 安装命令、验收、升级和回退见[安装与升级说明](docs/install.md)。
 
 ## 使用
 
@@ -133,6 +125,8 @@ PDF 按最多 200 页规划区间；超过本客户端 200 MB 阈值时物理拆
 
 ## Skill、验证与迁移
 
+开发时使用独立的 Python 3.11+ 环境，在仓库根目录运行 `python -m pip install -e ".[test,local]"`。`local` 依赖组固定已验证的 PyMuPDF、PyMuPDF4LLM 和 Layout 1.28.2，支持表格预检、本地提取和 PDF 后处理。
+
 0.4.3 通过 **166 项离线测试**，其中新增 19 项目录回归，包含固定版 Layout 模型实测；原文件仅重新执行本地预检。详见 [0.4.3 验收记录](docs/v0.4.3-validation.md)。
 
 0.4.2 通过 **147 项离线测试**，并对 10 份真实 PDF（400 页）进行预检。另一个本地候选在提取后因上下标／符号问题被拦截；本轮未调用真实云端 OCR。实测与限制见 [0.4.2 验收记录](docs/v0.4.2-validation.md)。
@@ -145,7 +139,7 @@ Skill 源码位于 [.agents/skills/mineru-ocr](.agents/skills/mineru-ocr/SKILL.m
 python -m pytest
 ```
 
-0.4.0 基线通过 **93 项离线测试**。复用 GB 6932—2015 的 108 页扫描 OCR，交付 1 份 MD 和 131 张引用图像；8 张表转为 Markdown、48 张保留 HTML。独立 GFM 渲染核对了全部 8 张转换表的 93 个单元格，素材包迁移后引用检查通过。详见[0.4.0 验收记录](docs/v0.4.0-validation.md)；本次新增验证见 [0.4.3 验收记录](docs/v0.4.3-validation.md)。
+0.4.0 基线通过 **93 项离线测试**。复用 GB 6932—2015 的 108 页扫描 OCR，交付 1 份 MD 和 131 张引用图像；8 张表转为 Markdown、48 张保留 HTML。独立 GFM 渲染核对了全部 8 张转换表的 93 个单元格，素材包迁移后引用检查通过。详见[0.4.0 验收记录](docs/v0.4.0-validation.md)。
 
 0.3.x 升级注意：新的交付不再附带 manifest 和三份报告；旧参数 `publish --image-dir` 退役，统一为 `images/`；额外 AI 增强命令退役。旧文件不会自动迁移或清理，可从旧结果包重新发布新的素材包。变更详情见 [CHANGELOG](CHANGELOG.md)。
 

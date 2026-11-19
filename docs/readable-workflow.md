@@ -1,10 +1,10 @@
 # 通用 Markdown 素材包后处理流程
 
-版本：0.4.3。目标是可阅读、可引用、便于 AI 读取的来源材料；不同 Wiki 或 RAG 系统自行决定摄入和知识加工方式。
+版本 1.0。目标是可阅读、可引用、便于 AI 读取的来源材料；不同 Wiki 或 RAG 系统自行决定摄入和知识加工方式。
 
 ## 0. 环境与 PDF 预检
 
-推荐在项目目录执行 `python -m pip install -e ".[local]"`，遵守本机安装授权。`doctor` 检查版本和加载情况，`preflight INPUT.pdf` 逐页检查文字、隐藏 OCR、异常字符、图像覆盖以及复杂／图片／疑似表格风险；两者不上传文件。
+日常使用按[安装说明](install.md)安装带 `[local]` 的 wheel。`doctor` 检查版本和加载情况，`preflight INPUT.pdf` 逐页检查文字、隐藏 OCR、异常字符、图像覆盖以及复杂／图片／疑似表格风险；两者不上传文件。
 
 `process INPUT.pdf --engine auto --output-dir DELIVERY --work-dir RECORDS`：有可用原生文字、表格可明确处理且没有阻断页时，优先尝试 PyMuPDF4LLM。复核提示不阻止本地尝试；任一阻断页仍使整份走云端，不做逐页混合拼接。`local` 模式从不上传，`cloud` 明确使用云端；Office 走云端。自动模式下，本地数值、文本或表格质量检查不通过可回退云端，原候选与报告保留。缺依赖、读取失败或后处理审核错误不会触发上传。
 

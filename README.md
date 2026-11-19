@@ -1,10 +1,12 @@
-# MinerU OCR 0.4.3
+# MinerU OCR 1.0
 
 [简体中文](README_zh-CN.md) | English
 
 Convert original documents into **faithful, traceable, AI-readable Markdown material packages** for ordinary readers, LLM Wikis and RAG systems.
 
 A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud OCR, resumable jobs and conservative offline postprocessing. Knowledge synthesis, visual interpretation, embeddings and ingestion belong to downstream systems.
+
+Version 1.0 aligns the CLI, Python package and Agent Skill versions and documents installation, upgrades and rollback.
 
 ## Changes in 0.4.3
 
@@ -31,19 +33,9 @@ A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud O
 - The extra Doubao enrichment modules, `enhance`, `--enhance`, `--enhance-best-effort` and AI JSONL generation have been removed. Existing outputs and legacy local configuration are retained. MinerU's own OCR/VLM extraction remains.
 - gas-std-wiki is an optional adapter, not a mandatory consumer.
 
-## Installation
+## Installation and upgrades
 
-Python 3.11+ is required. Follow the host's environment policy; use its existing Python.
-
-```sh
-python -m pip install -e ".[local]"       # Recommended: auto/local/cloud and PDF postprocessing
-python -m pip install -e .                # Minimal cloud-only runtime
-python -m pip install -e ".[readable]"    # Cloud plus PDF postprocessing
-python -m pip install -e ".[test,local]"  # Complete offline test suite
-python -m mineru_ocr.cli doctor
-```
-
-Core dependencies: httpx, pydantic, pypdf, platformdirs and python-dotenv. PDF postprocessing uses PyMuPDF. Full table-aware preflight and automatic routing require the `local` extra. The optional `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family; pip resolves its transitive dependencies. No additional OCR engine, LLM service or second local table parser is required. Dependencies are installed into the existing authorized Python environment, not copied into the skill. `doctor` does not install anything; use `python -m mineru_ocr.cli` when the CLI executable is not on PATH.
+For daily use, install the versioned wheel with the `local` extra in a dedicated Python environment, then install the matching skill ZIP in your agent's user skill directory. Run conversions from the workspace that contains the input documents. See [installation, upgrades and rollback](docs/install.md) for Windows commands and validation steps (Chinese).
 
 ## Workflow
 
@@ -126,6 +118,8 @@ The client plans up to 200 pages per range and physically splits PDFs above its 
 Without `process --output-dir`, cloud processing returns a raw `.mineru` bundle; local processing returns an immutable raw bundle under `--work-dir/native/<run-id>` (default: the processing cache). Rejected local candidates and their quality reports remain there for diagnosis. Retain timed-out cloud job IDs and resume; do not resubmit unnecessarily. Use `clean JOB_ID` only for intentionally discarded cloud job data.
 
 ## Development and migration
+
+For development, use a separate Python 3.11+ environment. From the repository root, run `python -m pip install -e ".[test,local]"`. The `local` extra pins the tested PyMuPDF/PyMuPDF4LLM/Layout 1.28.2 family and enables table-aware preflight, local extraction and PDF postprocessing.
 
 Version 0.4.3 passed **166 offline tests**, including 19 new contents regressions and checks using the pinned layout model. The real PDF retest used local preflight only. See the [0.4.3 validation record](docs/v0.4.3-validation.md).
 

@@ -1,4 +1,4 @@
-# Offline postprocessing — 0.4.3
+# Offline postprocessing — 1.0
 
 ## Inputs and defaults
 

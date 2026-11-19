@@ -1,0 +1,72 @@
+# MinerU OCR 安装与升级（Windows）
+
+日常转换从业务工作空间调用已安装的 `mineru-ocr`。开发仓库用于修改源码、运行测试和构建发布包。每台 Windows 主机在自己的用户账户下分别安装 CLI 和 skill。
+
+## 获取同版本发布包
+
+从维护者提供的目录获取 wheel 和 skill ZIP。如果该版本已在 [GitHub Releases](https://github.com/sherwood-shehy/MinerU-OCR/releases) 上传附件，也可以从对应版本下载这两份文件。
+
+| 发布产物 | 文件名 |
+| --- | --- |
+| CLI 安装包 | `mineru_ocr_skill-1.0-py3-none-any.whl` |
+| 全局 skill | `mineru-ocr-skill-v1.0.zip` |
+
+wheel 和 skill ZIP 均使用 Git 标签 `v1.0` 对应的源码。若同时收到 `SHA256SUMS.txt`，可用 `Get-FileHash -Algorithm SHA256 <文件路径>` 核对下载文件。
+
+没有预构建附件时，从 `v1.0` 对应的源码目录运行以下命令。构建产物会写入系统临时目录中的 `mineru-ocr-v1.0` 子目录。
+
+```powershell
+$releaseDir = Join-Path $env:TEMP 'mineru-ocr-v1.0'
+New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+python -m pip wheel --no-deps --wheel-dir $releaseDir .
+Compress-Archive -LiteralPath '.\.agents\skills\mineru-ocr' `
+  -DestinationPath (Join-Path $releaseDir 'mineru-ocr-skill-v1.0.zip') -Force
+```
+
+## 安装 CLI
+
+在 Windows PowerShell 中使用 Python 3.11 或更高版本。以下以 `1.0` 为例，先将 `$releaseDir` 替换为发布文件所在的目录。
+
+```powershell
+$releaseDir = 'C:\path\to\mineru-ocr-v1.0'
+$wheel = Join-Path $releaseDir 'mineru_ocr_skill-1.0-py3-none-any.whl'
+$runtime = Join-Path $env:LOCALAPPDATA 'mineru-ocr-runtime'
+python -m venv $runtime
+$runtimePython = Join-Path $runtime 'Scripts\python.exe'
+$cli = Join-Path $runtime 'Scripts\mineru-ocr.exe'
+& $runtimePython -m pip install "${wheel}[local]"
+& $cli --version
+& $cli doctor
+& $cli config show
+```
+
+`[local]` 安装表格预检、本地 PDF 提取和后处理所需依赖。`doctor` 应显示 `pdf_ready` 和 `local_ready` 都为 `true`。`doctor` 会同时给出发布包及源码环境的依赖安装提示。应用环境缺少依赖时，使用上面的 wheel 安装命令补齐。
+
+在同一 Windows 用户下，新 CLI 会读取现有用户配置。需要使用云端 OCR 且尚未配置时，运行 `& $cli config set-token` 交互式录入。`MINERU_API_TOKEN` 若已设置，优先于配置文件。`config show` 只报告配置状态，本地转换无需 token。
+
+## 从业务工作空间验收
+
+在开发仓库以外选择一个业务工作空间，用一份有文字层、结构简单的 PDF 试跑。根据文件实际名称修改下面的路径。
+
+```powershell
+& $cli process '.\inbox\sample.pdf' --engine local `
+  --work-dir '.\_agent\codex\mineru-smoke' --output-dir '.\outputs\mineru-smoke'
+```
+
+用 `& $cli validate <实际生成的Markdown路径> --work-dir '.\_agent\codex\mineru-smoke'` 验证输出，其中 Markdown 路径以 `process` 返回的结果为准。`--engine local` 禁止上传，输入若不适合本地提取，换用适合的测试文件。再确认模块的位置属于运行环境。
+
+```powershell
+& $runtimePython -c "import mineru_ocr; print(mineru_ocr.__file__)"
+```
+
+预期路径位于 `$runtime\Lib\site-packages` 下。检查原件仍在 `inbox/`，过程记录和交付各自在指定目录。
+
+## 配置全局 skill
+
+1. 将 `$runtime\Scripts` 的实际绝对路径加入 Windows 用户 `Path`，重开 PowerShell 和 Agent 应用。运行 `Get-Command mineru-ocr -All`，确认优先解析到该运行环境。如果旧启动器优先，先调整路径顺序或从旧解释器卸载全局 editable 安装，再检查命令解析结果。
+2. 将 skill ZIP 解压到临时目录。取其中的 `mineru-ocr/` 目录放入 Agent 的用户级技能目录。以本机布局为例，Codex 和 Claude 可共用 `%USERPROFILE%\.agents\skills\mineru-ocr`。如果 Claude 已有指向该目录的链接，继续沿用。已有同名 skill 时先将旧副本备份到技能搜索目录之外。完成后应能在目标目录直接找到 `SKILL.md`、`agents/` 和 `references/`。
+3. 在本机 Agent 中打开业务工作空间，用全局 `mineru-ocr` skill 再运行一次转换，确认它调用的是发布版，文件写入业务工作空间指定目录。
+
+## 升级与回退
+
+升级前保留当前 wheel 和配套 skill ZIP。用同一运行环境的 `$runtimePython` 安装目标版本的 wheel，带上 `[local]`，再替换全局 skill 副本。切换后重新检查命令版本、`doctor` 和业务目录中的本地转换。回退时用同样方式装回上一版 wheel 和对应的 skill ZIP。安装与回退沿用用户 token 配置。

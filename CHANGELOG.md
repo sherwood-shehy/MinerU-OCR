@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0 — 2026-11-19
+
+- Align the Python package, CLI and Agent Skill at version 1.0.
+- Document Windows installation, upgrades and rollback for the matching wheel and skill ZIP.
+
 ## 0.4.3 — 2026-09-24
 
 - Exclude native dotted table-of-contents blocks from uncertain-table findings, including continuation pages and fragmented model proposals. Verify visible text, ordered/aligned page references and a heading or subsection identifiers; keep original model boxes and the exclusion evidence in preflight diagnostics.
