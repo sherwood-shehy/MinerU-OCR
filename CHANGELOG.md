@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1
+
+- Publish Markdown files directly into the caller's delivery directory with one shared `images/` directory and relative links.
+- Keep publication records and raw cloud bundles in task directories. Clean up after successful validation and retain data for interrupted jobs or explicit review.
+- Document installation for other agents using the host's Python environment and the `[local]` wheel extra by default.
+
 ## 1.0 — 2026-11-19
 
 - Align the Python package, CLI and Agent Skill at version 1.0.

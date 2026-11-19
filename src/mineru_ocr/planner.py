@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 
+from . import records
 from .errors import PlanningError
 from .models import OCRJob, OCROptions, JobPart
 from .storage import job_dir, save_job, sha256_file
@@ -53,7 +54,7 @@ def _split_range_to_size(
     _split_range_to_size(reader, source_stem, midpoint + 1, end, split_dir, results)
 
 
-def plan_job(source: str | Path, options: OCROptions | None = None) -> OCRJob:
+def plan_job(source: str | Path, options: OCROptions | None = None, *, result_root: Path | None = None) -> OCRJob:
     path = Path(source).expanduser().resolve()
     if not path.is_file():
         raise PlanningError(f"Input file does not exist: {path}")
@@ -67,7 +68,8 @@ def plan_job(source: str | Path, options: OCROptions | None = None) -> OCRJob:
     job_id = uuid.uuid4().hex
     work = job_dir(job_id)
     work.mkdir(parents=True, exist_ok=False)
-    output_dir = path.with_name(f"{path.name}.mineru")
+    root = Path(result_root or records.default_work_dir()).resolve()
+    output_dir = root / 'cloud' / job_id / f'{path.name}.mineru'
     parts: list[JobPart] = []
     page_count: int | None = None
     source_type = "pdf" if suffix == ".pdf" else "office"

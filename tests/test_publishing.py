@@ -1,4 +1,5 @@
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,9 @@ def test_cli_publish_is_an_offline_command(tmp_path, monkeypatch, capsys):
     assert cli.main(["publish", str(bundle), "--output-dir", str(tmp_path / "out")]) == 0
     result = json.loads(capsys.readouterr().out)
     assert Path(result["markdown"]).is_file()
+    assert not {"manifest", "work_dir", "processing_reports"} & result.keys()
+    assert not list((tmp_path / "records").iterdir())
+    assert (bundle / "full.md").is_file()
 
 
 def test_same_image_bytes_have_one_asset_record_after_publish(tmp_path):
@@ -131,12 +135,129 @@ def test_offline_publish_does_not_load_environment_credentials(tmp_path, monkeyp
     assert cli.main(['publish', str(make_bundle(tmp_path)), '--output-dir', str(tmp_path / 'out')]) == 0
 
 
-def test_process_publishes_portable_materials(tmp_path, monkeypatch, capsys):
-    source = make_bundle(tmp_path)
-    monkeypatch.setattr(cli, 'load_dotenv', lambda: None)
-    monkeypatch.setattr(cli, 'process_files', lambda *args: [{'state': 'done', 'result_dir': str(source)}])
-    assert cli.main(['process', 'unused.pdf', '--engine', 'cloud', '--output-dir', str(tmp_path / 'out')]) == 0
+@pytest.fixture
+def completed_cloud(monkeypatch):
+    from mineru_ocr import service
+
+    class Client:
+        def __init__(self, token):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def request_uploads(self, parts, options):
+            return parts[0].data_id, ['upload'], None
+
+        def upload(self, url, path):
+            assert Path(path).is_file()
+
+        def batch_status(self, batch):
+            return {'data': {'extract_result': [{'data_id': batch, 'state': 'done', 'full_zip_url': 'result'}]}}
+
+        def download(self, url, path):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(path, 'w') as archive:
+                archive.writestr('full.md', '![figure](images/figure.png)')
+                archive.writestr('images/figure.png', b'shared-image')
+
+    monkeypatch.setattr(service, 'MinerUClient', Client)
+    monkeypatch.setattr(service, 'get_token', lambda: 'test-token')
+    return Client
+
+
+def test_cloud_process_publishes_flat_package_and_cleans_work(tmp_path, completed_cloud, capsys):
+    from mineru_ocr.publish import validate_output
+    sources = [tmp_path / 'first.docx', tmp_path / 'second.docx']
+    for source in sources:
+        source.write_bytes(b'input')
+    output = tmp_path / 'delivery'
+    assert cli.main(['process', *map(str, sources), '--engine', 'cloud', '--output-dir', str(output)]) == 0
+    jobs = json.loads(capsys.readouterr().out)
+    assert {path.name for path in output.iterdir()} == {'first.md', 'second.md', 'images'}
+    assert len(list((output / 'images').iterdir())) == 1
+    for job in jobs:
+        markdown = Path(job['markdown'])
+        assert '](images/' in markdown.read_text(encoding='utf-8')
+        assert validate_output(markdown)['validation_scope'] == 'references'
+        assert not {'manifest', 'work_dir', 'processing_reports', 'result_dir', 'output_dir'} & job.keys()
+    assert not list(tmp_path.glob('*.mineru*'))
+    assert not list((tmp_path / 'records').iterdir())
+
+
+def test_cloud_timeout_preserves_job_and_resumes_into_task_work(tmp_path, monkeypatch, completed_cloud, capsys):
+    from mineru_ocr import service
+    source = tmp_path / 'input.docx'
+    source.write_bytes(b'input')
+    with monkeypatch.context() as context:
+        def time_out(job_id, *, timeout_seconds):
+            return {'job_id': job_id, 'state': 'pending', 'timed_out': True}
+        context.setattr(service, 'wait_job', time_out)
+        assert cli.main(['process', str(source), '--engine', 'cloud', '--output-dir', str(tmp_path / 'out')]) == 1
+    pending = json.loads(capsys.readouterr().out)[0]
+    task = Path(pending['work_dir'])
+    assert task.is_dir()
+    resumed = service.resume_job(pending['job_id'])
+    raw = Path(resumed['result_dir'])
+    assert raw.is_relative_to(task) and (raw / 'full.md').is_file()
+    assert not (tmp_path / 'input.docx.mineru').exists()
+
+
+def test_cloud_process_keeps_explicit_work_dir(tmp_path, completed_cloud, capsys):
+    from mineru_ocr.publish import validate_output
+    source = tmp_path / 'input.docx'
+    source.write_bytes(b'input')
+    work = tmp_path / 'review'
+    assert cli.main(['process', str(source), '--engine', 'cloud', '--output-dir', str(tmp_path / 'out'),
+                     '--work-dir', str(work)]) == 0
     job = json.loads(capsys.readouterr().out)[0]
-    assert Path(job['markdown']).is_file()
-    assert {p.name for p in (tmp_path / 'out').iterdir()} == {'技术标准.v1.md', 'images'}
-    assert not Path(job['manifest']).is_relative_to(tmp_path / 'out')
+    assert Path(job['result_dir']).is_relative_to(work)
+    assert Path(job['manifest']).is_file() and Path(job['result_dir']).is_dir()
+    assert validate_output(job['markdown'], work_dir=work)['validation_scope'] == 'recorded_hashes'
+
+
+def test_cloud_download_error_reports_resumable_job(tmp_path, monkeypatch, completed_cloud, capsys):
+    import httpx
+    from mineru_ocr import service
+
+    source = tmp_path / 'input.docx'
+    source.write_bytes(b'input')
+    with monkeypatch.context() as context:
+        def interrupted(*args):
+            raise httpx.ReadError('connection lost')
+        context.setattr(completed_cloud, 'download', interrupted)
+        assert cli.main(['process', str(source), '--engine', 'cloud', '--output-dir', str(tmp_path / 'out')]) == 1
+    error = json.loads(capsys.readouterr().err)
+    resumed = service.resume_job(error['job_id'])
+    assert Path(resumed['result_dir']).is_relative_to(error['work_dir'])
+
+
+def test_failed_publication_preserves_raw_result_for_review(tmp_path, completed_cloud, capsys):
+    source = tmp_path / 'input.docx'
+    source.write_bytes(b'input')
+    review = tmp_path / 'review.json'
+    review.write_text('{"replacements": [{}]}', encoding='utf-8')
+    output = tmp_path / 'out'
+    assert cli.main(['process', str(source), '--engine', 'cloud', '--output-dir', str(output),
+                     '--review-file', str(review)]) == 1
+    error = json.loads(capsys.readouterr().err)
+    task = Path(error['work_dir'])
+    assert list(task.glob('cloud/*/input.docx.mineru/full.md'))
+    assert not list(output.glob('*.md'))
+
+
+def test_cli_publish_avoids_names_with_legacy_records(tmp_path, capsys):
+    from mineru_ocr.publish import publish_output, validate_output
+    source = make_bundle(tmp_path)
+    output = tmp_path / 'out'
+    legacy = publish_output(source, output)
+    Path(legacy['markdown']).unlink()
+
+    assert cli.main(['publish', str(source), '--output-dir', str(output)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['markdown'] != legacy['markdown']
+    assert Path(legacy['manifest']).is_file()
+    assert validate_output(result['markdown'])['validation_scope'] == 'references'

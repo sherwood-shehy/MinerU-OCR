@@ -112,7 +112,7 @@ def publish_output(path: str | Path, output_dir: str | Path, *, name: str | None
             markdown = output / (candidate + '.md')
             record = records_dir(markdown, root)
             lock = output / ('.' + candidate + '.publish.lock')
-            if record.exists() or any((output / (candidate + suffix)).exists()
+            if record.exists() or records_dir(markdown).exists() or any((output / (candidate + suffix)).exists()
                                      for suffix in ('.md', '.manifest.json', '.ai.jsonl', *REPORT_SUFFIXES)):
                 index += 1
                 continue

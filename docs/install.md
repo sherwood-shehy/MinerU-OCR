@@ -4,23 +4,23 @@
 
 ## 获取同版本发布包
 
-从维护者提供的目录获取 wheel 和 skill ZIP。如果该版本已在 [GitHub Releases](https://github.com/sherwood-shehy/MinerU-OCR/releases) 上传附件，也可以从对应版本下载这两份文件。
+从维护者获取同一版本的 wheel 和 Skill ZIP。发布附件可从 GitHub Releases 的对应版本页面下载。以下使用 1.1 的文件名。 [GitHub Releases](https://github.com/sherwood-shehy/MinerU-OCR/releases)
 
 | 发布产物 | 文件名 |
 | --- | --- |
-| CLI 安装包 | `mineru_ocr_skill-1.0-py3-none-any.whl` |
-| 全局 skill | `mineru-ocr-skill-v1.0.zip` |
+| CLI 安装包 | `mineru_ocr_skill-1.1-py3-none-any.whl` |
+| 全局 skill | `mineru-ocr-skill-v1.1.zip` |
 
-wheel 和 skill ZIP 均使用 Git 标签 `v1.0` 对应的源码。若同时收到 `SHA256SUMS.txt`，可用 `Get-FileHash -Algorithm SHA256 <文件路径>` 核对下载文件。
+wheel 和 Skill ZIP 应从同一源码修订版本构建。若同时收到 `SHA256SUMS.txt`，可用 `Get-FileHash -Algorithm SHA256 <文件路径>` 核对下载文件。
 
-没有预构建附件时，从 `v1.0` 对应的源码目录运行以下命令。构建产物会写入系统临时目录中的 `mineru-ocr-v1.0` 子目录。
+如果需要从源码安装 1.1，在对应的源码目录运行以下命令。构建产物会写入系统临时目录中的 `mineru-ocr-v1.1` 子目录。
 
 ```powershell
-$releaseDir = Join-Path $env:TEMP 'mineru-ocr-v1.0'
+$releaseDir = Join-Path $env:TEMP 'mineru-ocr-v1.1'
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 python -m pip wheel --no-deps --wheel-dir $releaseDir .
 Compress-Archive -LiteralPath '.\.agents\skills\mineru-ocr' `
-  -DestinationPath (Join-Path $releaseDir 'mineru-ocr-skill-v1.0.zip') -Force
+  -DestinationPath (Join-Path $releaseDir 'mineru-ocr-skill-v1.1.zip') -Force
 ```
 
 ## 安装 CLI
@@ -37,8 +37,8 @@ $runtimePython = (Get-Command python -CommandType Application -ErrorAction Stop 
 如果 CLI 版本与 Skill 匹配，并且 `doctor` 的 `pdf_ready` 和 `local_ready` 均为 `true`，即可直接复用。需要安装或补齐依赖时，将 `$releaseDir` 改为发布包所在目录，用同一个解释器安装带 `[local]` 的 wheel。
 
 ```powershell
-$releaseDir = 'C:\path\to\mineru-ocr-v1.0'
-$wheel = Join-Path $releaseDir 'mineru_ocr_skill-1.0-py3-none-any.whl'
+$releaseDir = 'C:\path\to\mineru-ocr-v1.1'
+$wheel = Join-Path $releaseDir 'mineru_ocr_skill-1.1-py3-none-any.whl'
 & $runtimePython -m pip install "${wheel}[local]"
 & $runtimePython -m mineru_ocr.cli --version
 & $runtimePython -m mineru_ocr.cli doctor
@@ -50,7 +50,7 @@ $wheel = Join-Path $releaseDir 'mineru_ocr_skill-1.0-py3-none-any.whl'
 
 ### 依赖冲突或安装受限时
 
-如果共享环境已有其他版本的 PyMuPDF 系列组件，可用 `& $runtimePython -m pip install --dry-run "${wheel}[local]"` 查看安装计划。v1.0 的 `[local]` 固定使用 PyMuPDF、PyMuPDF4LLM 和 PyMuPDF Layout 1.28.2。计划替换共享依赖时，先确认对其他项目的影响。
+如果共享环境已有其他版本的 PyMuPDF 系列组件，可用 `& $runtimePython -m pip install --dry-run "${wheel}[local]"` 查看安装计划。1.1 的 `[local]` 固定使用 PyMuPDF、PyMuPDF4LLM 和 PyMuPDF Layout 1.28.2。计划替换共享依赖时，先确认对其他项目的影响。
 
 宿主机的安装限制或依赖冲突导致无法复用时，先查找已有的兼容环境。确实需要隔离且经用户确认后，可以用宿主机选定的 Python 创建一套由多个 Agent 共用的独立环境。随后用该环境的解释器继续验收和配置 Skill。
 
@@ -64,14 +64,16 @@ $runtimePython = Join-Path $runtime 'Scripts\python.exe'
 
 ## 从业务工作空间验收
 
-在开发仓库以外选择一个业务工作空间，用一份有文字层、结构简单的 PDF 试跑。根据文件实际名称修改下面的路径。
+在开发仓库以外选择一个业务工作空间，用一份有文字层、结构简单的 PDF 试跑。根据文件实际名称修改下面的路径。多个文档可以写入同一个交付目录，平铺 Markdown 并共用 `images/`。
 
 ```powershell
 & $runtimePython -m mineru_ocr.cli process '.\inbox\sample.pdf' --engine local `
-  --work-dir '.\_agent\codex\mineru-smoke' --output-dir '.\outputs\mineru-smoke'
+  --output-dir '.\outputs\mineru-smoke'
 ```
 
-用 `& $runtimePython -m mineru_ocr.cli validate <实际生成的Markdown路径> --work-dir '.\_agent\codex\mineru-smoke'` 验证输出，其中 Markdown 路径以 `process` 返回的结果为准。`--engine local` 禁止上传，输入若不适合本地提取，换用适合的测试文件。再确认模块的位置属于运行环境。
+用 `& $runtimePython -m mineru_ocr.cli validate <实际生成的Markdown路径>` 检查输出的引用，其中 Markdown 路径以 `process` 返回的结果为准。`--engine local` 禁止上传，输入若不适合本地提取，换用适合的测试文件。再确认模块的位置属于运行环境。
+
+1.1 会在内部校验通过后清理任务临时目录。若需保留 manifest、快照、报告或原始包复核，可在转换时显式加 `--work-dir`，并在校验时传入同一路径。已发布的 v1.0 wheel 对应 [v1.0 安装文档](https://github.com/sherwood-shehy/MinerU-OCR/blob/v1.0/docs/install.md)。
 
 ```powershell
 & $runtimePython -c "import mineru_ocr; print(mineru_ocr.__file__)"

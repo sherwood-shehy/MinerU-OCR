@@ -1,4 +1,4 @@
-# MinerU OCR 1.0
+# MinerU OCR 1.1
 
 简体中文 | [English](README.md)
 
@@ -6,7 +6,7 @@
 
 项目提供 Python CLI 和 Agent Skill：原生 PDF 可本地提取，扫描或不适合本地的文档使用 MinerU Cloud；两种结果共用保守后处理和交付校验。语义提炼、视觉问答、向量化、知识页生成由下游摄入流程完成。
 
-1.0 统一 CLI、Python 包与 Agent Skill 的版本号，并新增安装、升级和回退说明。
+1.1 支持多份 Markdown 在同一交付目录平铺并共用图片，任务记录在交付校验通过后默认清理。
 
 ## 0.4.3 的变化
 
@@ -26,7 +26,7 @@
 ## 0.4.0 的变化
 
 - **交付包简化为 Markdown + images/**。图片使用标准相对链接，保留原图题及正文中的有效引用位置。普通阅读和基础摄入不依赖 manifest。
-- **处理记录独立存放**。manifest、原始输入快照、布局证据和校勘报告保存在 `--work-dir`，不进入默认交付目录。建议为长期可追溯性明确指定持久工作目录。
+- **处理记录独立存放**。manifest、原始输入快照、布局证据和校勘报告位于任务工作目录。
 - **独立无效图块可筛除**。先生成图片清单并对照原件，再用绑定原文和图片哈希、引用行的审核文件删除无效水印、印章、logo 或装饰图块。用途不明时保留，不修改有效图片内部像素。
 - **完全相同的图片只存一份**。以文件字节 SHA-256 去重，正文重复出现的位置和图题照常保留；相似图、不同比例图和不同标注图不做感知去重。
 - **通用源材料版成为默认模式**。`readable` 默认 `source + auto`：保守整理结构、选择性转换简单表格，不生成整页 PDF 截图，不向条款、表格和公式插入密集核对链接。`images/` 只存正文所需资源；完整原页图库须显式选择 `--edition reading`。
@@ -35,7 +35,9 @@
 
 ## 安装与升级
 
-从 [GitHub v1.0 Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0) 下载同版本的安装文件。
+从同一源码修订版本构建 1.1 的 wheel 和 Skill ZIP。 [构建与安装指引](docs/install.md)
+
+已发布的旧版安装文件仍可从 GitHub 下载。 [v1.0 Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0)
 
 - [CLI wheel（`mineru_ocr_skill-1.0-py3-none-any.whl`）](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
 - [Agent Skill ZIP（`mineru-ocr-skill-v1.0.zip`）](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
@@ -50,43 +52,48 @@
 mineru-ocr config set-token
 mineru-ocr config show
 mineru-ocr preflight input.pdf
-mineru-ocr process input.pdf --output-dir delivery --work-dir processing
-mineru-ocr process input.pdf --engine local --output-dir delivery --work-dir processing
+mineru-ocr process input.pdf --output-dir delivery
+mineru-ocr process input.pdf another.pdf --engine local --output-dir delivery
 ```
 
 `process --engine auto` 在选择云端时可能上传，只有云端分支需要 token；明确不上传时使用 `--engine local`，预检或质量不合格会停止。Office 输入走云端。`submit`、`status`、`resume` 保持云端任务语义；模型、语言及 OCR 开关用于云端，本地固定关闭 OCR 并提取表格。
 
 预检结合可见文字、点线和对齐且顺序合理的页码识别原生目录，支持续目录及模型将目录拆成多个候选框的情况。排除依据记录在 `tables.non_table_regions`，同页其他表格仍独立判断；缺少点线、条目不明确、含图片或表格线时继续保守处理。详见[分流规则](docs/readable-workflow.md)。
 
-指定 `--output-dir` 时，具有已适配证据的 PDF 自动执行原页后处理；证据不足时进行普通发布并返回限制说明。`--review-file`、`--name`、`--title` 仅用于单文件且指定交付目录的任务。审核图片时先保留原始提取结果，执行 `inspect-images`，再将审核记录应用于同一结果的 `readable`；不要用旧审核哈希重新提取。
+指定 `--output-dir` 时，具有已适配证据的 PDF 自动执行原页后处理；证据不足时进行普通发布并返回限制说明。`--review-file`、`--name`、`--title` 仅用于单文件且指定交付目录的任务。需要源绑定复核时，先用 `--work-dir processing` 提取原始包并省略 `--output-dir`，再将返回的 `result_dir` 作为下面的 `RAW_RESULT`。
 
 下面的操作全部离线，不需要 token，也不会调用额外的语义模型。
 
 ```powershell
 # 直接整理已有 OCR 的资源链接并发布
-mineru-ocr publish input.pdf.mineru --output-dir delivery --work-dir processing
+mineru-ocr publish RAW_RESULT --output-dir delivery
 
 # 对照原 PDF 生成通用源材料版；复用 OCR，不再次上传
-mineru-ocr readable input.pdf.mineru --source-pdf input.pdf --output-dir delivery --work-dir processing
+mineru-ocr readable RAW_RESULT --source-pdf input.pdf --output-dir delivery
 
 # 生成图片核对清单；结果返回 gallery、inventory 和 review_file 路径
-mineru-ocr inspect-images input.pdf.mineru --work-dir processing
+mineru-ocr inspect-images RAW_RESULT --work-dir processing
 
 # 将核对后的 review.json 用于文字校勘、表头确认及无效图块筛除
-mineru-ocr readable input.pdf.mineru --source-pdf input.pdf --review-file review.json --output-dir delivery --work-dir processing
+mineru-ocr readable RAW_RESULT --source-pdf input.pdf --review-file review.json --output-dir delivery --work-dir processing
 
 mineru-ocr validate "delivery/input（源材料）.md" --work-dir processing
 ```
 
 `readable` 需要与提取记录哈希和页数匹配的 PDF，以及已适配的 MinerU Content List 或本地逐页证据。本地结果保留提取的标题层级和原目录，按物理页序关联原页。没有可靠布局时使用 `publish`，不臆造精确页码。Office 文件可 OCR 后直接发布；PDF 后处理需匹配的 PDF 来源。
 
-`--work-dir` 与交付目录必须分离且互不嵌套。未指定时使用系统用户缓存下的 `mineru-ocr/deliveries`。命令返回实际 `work_dir`、`manifest` 和 `processing_reports` 路径；它们是内部记录，不是必须交付的阅读文件。
-
 ## 输出与迁移
+
+以下清理行为适用于当前源码构建。已发布的 v1.0 wheel 对应 [v1.0 输出说明](https://github.com/sherwood-shehy/MinerU-OCR/blob/v1.0/README_zh-CN.md#输出与迁移)。
+
+同一交付目录平铺多份 Markdown，共用一个 `images/`。日常发布省略 `--work-dir`，CLI 在用户缓存的 `mineru-ocr/deliveries` 下创建任务临时目录，将 manifest、快照、校勘报告和云端 `.mineru` 原始包放在那里，并在交付校验通过后自动回收。
+
+需要复核或明确要求保留时，指定 `--work-dir`。它与交付目录必须分离且互不嵌套。续跑所需的任务数据会保留。带保留记录运行 `validate` 可做历史哈希校验，清理后仍可用 `validate` 检查图片引用和锚点。复核通过后，按需清理本任务自己的临时数据。
 
 ```text
 delivery/
   文档.md
+  另一份文档.md
   images/
     <sha256>.png
     <sha256>.svg
@@ -126,7 +133,7 @@ mineru-ocr resume JOB_ID
 
 PDF 按最多 200 页规划区间；超过本客户端 200 MB 阈值时物理拆分，片段目标为 190 MB。以上是客户端配置，不保证云服务配额永远不变。默认模型 vlm，语言 ch，OCR、表格与公式开启。小型 Office 文件支持 `--page-ranges`；超限 Office 请先导出 PDF。
 
-未传 `process --output-dir` 时，云端返回原始 `.mineru` 包，本地返回 `--work-dir/native/<run-id>` 下的原始包（默认工作缓存）；不合格的本地候选及质量报告也保留用于诊断。云端任务超时应保留 job ID 并恢复，避免重新提交。`clean JOB_ID` 用于明确放弃的云端任务数据。
+省略 `process --output-dir` 时，CLI 保留原始包供复核。本地包位于工作目录的 `native/<run-id>`，云端 `.mineru` 包位于 `cloud/<job-id>`，工作目录省略时使用用户缓存。云端任务超时后按原 job ID 执行 `resume`，再用返回的 `result_dir` 做发布或复核。`clean JOB_ID` 用于放弃未完成的云端任务。
 
 ## Skill、验证与迁移
 

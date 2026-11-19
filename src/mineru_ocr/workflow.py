@@ -1,6 +1,7 @@
 """Explicit auto/local/cloud routing and one shared publication pipeline."""
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 import uuid
 
@@ -10,7 +11,7 @@ from .preflight import preflight_pdf
 from .provenance import read_manifest
 from .publish import publish_output, source_markdown
 from .readable import _layout, prepare_readable
-from .records import check_work_dir, default_work_dir
+from .records import DeliveryWorkspace
 from .service import process_files
 
 
@@ -25,8 +26,6 @@ def process_documents(files: list[str], options, timeout: int, *, engine: str = 
         raise MinerUOCRError('Review, title and name options require exactly one input')
     if not output_dir and any((review_file, name, title)):
         raise MinerUOCRError('Review, title and name options require --output-dir')
-    root = check_work_dir(output_dir, work_dir) if output_dir else Path(work_dir or default_work_dir()).resolve()
-    cloud_process = cloud_process or process_files
     plans = []
     for file in files:
         pdf = Path(file).expanduser().resolve()
@@ -39,34 +38,38 @@ def process_documents(files: list[str], options, timeout: int, *, engine: str = 
     if any(selected == 'local' for _, selected, _ in plans):
         from .environment import require_local
         require_local()
-    results = []
-    for pdf, selected, inspection in plans:
-        fallback = None
-        if selected == 'local':
-            directory = root / 'native' / uuid.uuid4().hex
-            try:
-                result = extract_native(pdf, directory, preflight=inspection)
-            except NativeQualityError as exc:
-                if engine == 'local':
-                    raise
-                fallback = {'reason': 'native_quality_failed', 'result_dir': str(exc.directory), 'quality': exc.report}
-                selected = 'cloud'
-        if selected == 'cloud':
-            result = cloud_process([str(pdf)], options, timeout)[0]
-            result.update({'engine': 'cloud', 'preflight': inspection})
-            if fallback:
-                result['local_attempt'] = fallback
-        if result.get('state') == 'done' and result.get('result_dir') and output_dir:
-            markdown = source_markdown(result['result_dir'])
-            metadata = read_manifest(markdown)
-            if pdf.suffix.lower() == '.pdf' and _layout(markdown, metadata):
-                result.update(prepare_readable(markdown, pdf, output_dir, work_dir=root,
-                                               review_file=review_file, name=name, title=title,
-                                               table_format=table_format, edition=edition))
-                result['postprocessing'] = 'source_pages_and_review'
-            else:
-                result.update(publish_output(markdown, output_dir, name=name, work_dir=root, review_file=review_file))
-                result['postprocessing'] = 'portable_publication'
-                result['limitations'] = ['Adapted page evidence unavailable; source-page postprocessing was not performed.']
-        results.append(result)
-    return results
+    with DeliveryWorkspace(output_dir, work_dir) as task:
+        root = task.path
+        cloud_process = cloud_process or partial(process_files, result_root=root)
+        results = []
+        for pdf, selected, inspection in plans:
+            fallback = None
+            if selected == 'local':
+                directory = root / 'native' / uuid.uuid4().hex
+                try:
+                    result = extract_native(pdf, directory, preflight=inspection)
+                except NativeQualityError as exc:
+                    if engine == 'local':
+                        raise
+                    fallback = {'reason': 'native_quality_failed', 'result_dir': str(exc.directory), 'quality': exc.report}
+                    selected = 'cloud'
+            if selected == 'cloud':
+                result = cloud_process([str(pdf)], options, timeout)[0]
+                result.update({'engine': 'cloud', 'preflight': inspection})
+                if fallback:
+                    result['local_attempt'] = fallback
+            if result.get('state') == 'done' and result.get('result_dir') and output_dir:
+                markdown = source_markdown(result['result_dir'])
+                metadata = read_manifest(markdown)
+                if pdf.suffix.lower() == '.pdf' and _layout(markdown, metadata):
+                    result.update(prepare_readable(markdown, pdf, output_dir, work_dir=root,
+                                                   review_file=review_file, name=name, title=title,
+                                                   table_format=table_format, edition=edition))
+                    result['postprocessing'] = 'source_pages_and_review'
+                else:
+                    result.update(publish_output(markdown, output_dir, name=name, work_dir=root, review_file=review_file))
+                    result['postprocessing'] = 'portable_publication'
+                    result['limitations'] = ['Adapted page evidence unavailable; source-page postprocessing was not performed.']
+            results.append(result)
+        task.finish(results)
+        return results

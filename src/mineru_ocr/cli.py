@@ -15,7 +15,8 @@ from .config import (
     prompt_and_save_token,
 )
 from .models import OCROptions
-from .service import clean_job, process_files, resume_job, status_job, submit_job
+from .records import DeliveryWorkspace
+from .service import clean_job, resume_job, status_job, submit_job
 
 
 def _options(args) -> OCROptions:
@@ -85,9 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("path")
     inspect = sub.add_parser("inspect-images", help="Prepare a local image inventory for source review")
     inspect.add_argument("path")
-    for command in [publish, readable, validate, inspect]:
-        command.add_argument("--work-dir", type=Path, help="Internal records directory outside the delivery; default: user cache")
-    sub.choices["process"].add_argument("--work-dir", type=Path)
+    for command in [sub.choices["process"], publish, readable]:
+        command.add_argument("--work-dir", type=Path, help="Keep processing records in this directory outside the delivery")
+    for command in [validate, inspect]:
+        command.add_argument("--work-dir", type=Path, help="Directory containing existing processing records")
     config = sub.add_parser("config")
     config.add_argument(
         "action",
@@ -106,8 +108,7 @@ def main(argv: list[str] | None = None) -> int:
             result = process_documents(args.files, _options(args), args.timeout, engine=args.engine,
                                        output_dir=args.output_dir, work_dir=args.work_dir,
                                        review_file=args.review_file, name=args.name, title=args.title,
-                                       table_format=args.table_format, edition=args.edition,
-                                       cloud_process=process_files)
+                                       table_format=args.table_format, edition=args.edition)
         elif args.command == "preflight":
             from .preflight import preflight_pdf
             result = preflight_pdf(args.path)
@@ -122,15 +123,20 @@ def main(argv: list[str] | None = None) -> int:
             result = resume_job(args.job_id, args.timeout)
         elif args.command == "clean":
             result = clean_job(args.job_id)
-        elif args.command == "publish":
-            from .publish import publish_output
-            result = publish_output(args.path, args.output_dir, name=args.name, work_dir=args.work_dir, review_file=args.review_file)
-        elif args.command == "readable":
-            from .readable import prepare_readable
-            result = prepare_readable(args.path, args.source_pdf, args.output_dir,
-                                      name=args.name, title=args.title, review_file=args.review_file,
-                                      profile=args.profile, edition=args.edition, table_format=args.table_format,
-                                      target_project=args.target_project, source_id=args.source_id, work_dir=args.work_dir)
+        elif args.command in {"publish", "readable"}:
+            from .publish import publish_output, source_for_processing
+            with DeliveryWorkspace(args.output_dir, args.work_dir) as task:
+                source = source_for_processing(args.path) if task.temporary else args.path
+                if args.command == "publish":
+                    result = publish_output(source, args.output_dir, name=args.name,
+                                            work_dir=task.path, review_file=args.review_file)
+                else:
+                    from .readable import prepare_readable
+                    result = prepare_readable(source, args.source_pdf, args.output_dir,
+                                              name=args.name, title=args.title, review_file=args.review_file,
+                                              profile=args.profile, edition=args.edition, table_format=args.table_format,
+                                              target_project=args.target_project, source_id=args.source_id, work_dir=task.path)
+                task.finish([result])
         elif args.command == "validate":
             from .publish import validate_output
             result = validate_output(args.path, work_dir=args.work_dir)
@@ -148,7 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if any(job.get("state") == "failed" or job.get("timed_out")
                         or (args.command == 'doctor' and not job.get('local_ready')) for job in jobs) else 0
     except (MinerUOCRError, OSError, ValueError) as exc:
-        print(json.dumps({"error": str(exc), "code": getattr(exc, "code", None)}, ensure_ascii=False), file=sys.stderr)
+        error = {"error": str(exc), "code": getattr(exc, "code", None)}
+        for key in ('job_id', 'work_dir'):
+            if value := getattr(exc, key, None):
+                error[key] = value
+        print(json.dumps(error, ensure_ascii=False), file=sys.stderr)
         return 1
 
 

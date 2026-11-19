@@ -1,4 +1,4 @@
-# MinerU OCR 1.0
+# MinerU OCR 1.1
 
 [简体中文](README_zh-CN.md) | English
 
@@ -6,7 +6,7 @@ Convert original documents into **faithful, traceable, AI-readable Markdown mate
 
 A Python CLI and Agent Skill combine local native PDF extraction, MinerU Cloud OCR, resumable jobs and conservative offline postprocessing. Knowledge synthesis, visual interpretation, embeddings and ingestion belong to downstream systems.
 
-Version 1.0 aligns the CLI, Python package and Agent Skill versions and documents installation, upgrades and rollback.
+Version 1.1 publishes multiple Markdown files into one delivery directory with shared images and cleans up task records after successful validation.
 
 ## Changes in 0.4.3
 
@@ -35,7 +35,9 @@ Version 1.0 aligns the CLI, Python package and Agent Skill versions and document
 
 ## Installation and upgrades
 
-Download the matching files from the [v1.0 GitHub Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0).
+Build the 1.1 wheel and Skill ZIP from the same source revision. [Build and installation guide (Chinese)](docs/install.md)
+
+The existing v1.0 files are available from the [v1.0 GitHub Release](https://github.com/sherwood-shehy/MinerU-OCR/releases/tag/v1.0).
 
 - [CLI wheel (`mineru_ocr_skill-1.0-py3-none-any.whl`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru_ocr_skill-1.0-py3-none-any.whl)
 - [Agent Skill ZIP (`mineru-ocr-skill-v1.0.zip`)](https://github.com/sherwood-shehy/MinerU-OCR/releases/download/v1.0/mineru-ocr-skill-v1.0.zip)
@@ -48,22 +50,22 @@ For daily use, reuse the host's existing Python 3.11+ environment and any instal
 mineru-ocr config set-token
 mineru-ocr config show
 mineru-ocr preflight input.pdf
-mineru-ocr process input.pdf --output-dir delivery --work-dir processing
-mineru-ocr process input.pdf --engine local --output-dir delivery --work-dir processing
+mineru-ocr process input.pdf --output-dir delivery
+mineru-ocr process input.pdf another.pdf --engine local --output-dir delivery
 ```
 
 `process --engine auto` may upload when cloud processing is selected; configure a token only when that branch is needed. `--engine local` fails rather than uploading an ineligible or rejected PDF. Office inputs use cloud. `submit`, `status` and `resume` remain cloud job operations. `MINERU_API_TOKEN` overrides the local plaintext user configuration; `config show` reports status only. Model/language/OCR flags apply to the cloud backend; the local backend always disables OCR and extracts tables.
 
 Preflight distinguishes native dotted contents blocks from table proposals using visible entries and aligned, ordered page numbers. It also handles continuation pages and model boxes covering only part of a verified contents block. Exclusions are recorded in `tables.non_table_regions`; they do not exempt other tables on that page. Missing leaders, ambiguous rows, images or ruling keep the conservative route. See the [routing details](docs/readable-workflow.md) (Chinese).
 
-With `--output-dir`, adapted PDF results receive source-page postprocessing automatically. Results without supported layout evidence receive portable publication with an explicit limitation. Use `--review-file`, `--name` and `--title` only with one input and `--output-dir`. For source-bound image review, first retain the raw result, run `inspect-images`, then use `readable` on that exact result; do not rerun extraction against an old review hash.
+With `--output-dir`, adapted PDF results receive source-page postprocessing automatically. Results without supported layout evidence receive portable publication with an explicit limitation. Use `--review-file`, `--name` and `--title` only with one input and `--output-dir`. For source-bound review, first run `process` with `--work-dir processing` and omit `--output-dir`. Use the returned `result_dir` as `RAW_RESULT` in the commands below so the review applies to the same extraction.
 
 Reuse completed OCR for local processing, without another upload or semantic-model call:
 
 ```sh
-mineru-ocr publish input.pdf.mineru --output-dir delivery --work-dir processing
-mineru-ocr inspect-images input.pdf.mineru --work-dir processing
-mineru-ocr readable input.pdf.mineru --source-pdf input.pdf --review-file review.json --output-dir delivery --work-dir processing
+mineru-ocr publish RAW_RESULT --output-dir delivery
+mineru-ocr inspect-images RAW_RESULT --work-dir processing
+mineru-ocr readable RAW_RESULT --source-pdf input.pdf --review-file review.json --output-dir delivery --work-dir processing
 mineru-ocr validate "delivery/input（源材料）.md" --work-dir processing
 ```
 
@@ -73,13 +75,17 @@ The review file is optional. `inspect-images` returns an inventory, a local Mark
 
 ## Delivery and processing records
 
+The cleanup behavior below applies to builds from the current source. For the published v1.0 wheel, see the [v1.0 delivery instructions](https://github.com/sherwood-shehy/MinerU-OCR/blob/v1.0/README.md#delivery-and-processing-records).
+
 ```text
 delivery/
   document.md
+  another.md
   images/
     <sha256>.png
 
 processing/
+  cloud/<job-id>/input.pdf.mineru/
   <record keyed by absolute delivery Markdown path>/
     document.md
     document.manifest.json
@@ -90,11 +96,13 @@ processing/
     document.校勘与缺口.md
 ```
 
-The three reports are generated by `readable` and remain internal. `--work-dir` must be separate from, and not nested within or above, the delivery directory. If omitted it defaults to `mineru-ocr/deliveries` under the platform user cache. Use an explicit persistent directory for long-term provenance; commands return the actual record and report paths.
+The caller selects `--output-dir`. Markdown files are written directly into that directory and share its `images/` directory. By default, `process` with `--output-dir`, `publish` and `readable` create a temporary task directory under `mineru-ocr/deliveries` in the user cache. Manifests, snapshots, reports and cloud `.mineru` bundles stay in that work area. The CLI validates the delivery against the records and then removes its temporary directory on success.
+
+Use an explicit `--work-dir` to retain records for review or on request. Keep it separate from delivery with neither directory nested in the other. An interrupted job retains its task data for continuation. When supplied records are no longer needed, remove only the task's own temporary data after validation.
 
 Move the Markdown and referenced `images/` together. No sidecar is required for ordinary reading or basic ingestion. Multiple documents may share the directory: existing documents are never overwritten, and identical assets are reused. A document without resources needs no empty image directory.
 
-At its recorded location, `validate --work-dir processing` checks recorded hashes, evidence, reports, references and generated anchors. After relocation without records it reports `validation_scope: references`: existence and anchor checks only, not historical integrity verification. Automatic rebinding of relocated records is not implemented.
+At its recorded location, `validate --work-dir processing` checks recorded hashes, evidence, reports, references and generated anchors. After cleanup or relocation, `validate` reports `validation_scope: references` and checks resource existence and anchors.
 
 Figure embeds use `![Figure 1](images/<hash>.png)`. Source-page mappings stay in the processing records; default delivery does not duplicate PDF pages as images. Only explicit `--edition reading` renders the full-page verification gallery. HTML tables and math still depend on reader support.
 
@@ -120,7 +128,7 @@ mineru-ocr resume JOB_ID
 
 The client plans up to 200 pages per range and physically splits PDFs above its 200 MB threshold, targeting 190 MB fragments. These are configured client limits, not promises about current cloud quotas. Defaults: vlm model, ch language, OCR/tables/formulas enabled. Small Office inputs support explicit `--page-ranges`; oversized Office inputs need PDF export.
 
-Without `process --output-dir`, cloud processing returns a raw `.mineru` bundle; local processing returns an immutable raw bundle under `--work-dir/native/<run-id>` (default: the processing cache). Rejected local candidates and their quality reports remain there for diagnosis. Retain timed-out cloud job IDs and resume; do not resubmit unnecessarily. Use `clean JOB_ID` only for intentionally discarded cloud job data.
+Without `process --output-dir`, the command returns and retains a raw bundle for review. Cloud bundles are under `cloud/<job-id>/` and local bundles under `native/<run-id>/` in the chosen work directory or user cache. On a cloud timeout, use `resume JOB_ID` and publish or review the returned `result_dir`. Use `clean JOB_ID` to discard an unfinished cloud job. After accepting a resumed or reviewed result, remove its retained task files when they are no longer needed.
 
 ## Development and migration
 

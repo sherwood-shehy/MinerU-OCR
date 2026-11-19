@@ -1,12 +1,12 @@
 # 通用 Markdown 素材包后处理流程
 
-版本 1.0。目标是可阅读、可引用、便于 AI 读取的来源材料；不同 Wiki 或 RAG 系统自行决定摄入和知识加工方式。
+版本 1.1。目标是可阅读、可引用、便于 AI 读取的来源材料。不同 Wiki 或 RAG 系统自行决定摄入和知识加工方式。
 
 ## 0. 环境与 PDF 预检
 
 日常使用按[安装说明](install.md)安装带 `[local]` 的 wheel。`doctor` 检查版本和加载情况，`preflight INPUT.pdf` 逐页检查文字、隐藏 OCR、异常字符、图像覆盖以及复杂／图片／疑似表格风险；两者不上传文件。
 
-`process INPUT.pdf --engine auto --output-dir DELIVERY --work-dir RECORDS`：有可用原生文字、表格可明确处理且没有阻断页时，优先尝试 PyMuPDF4LLM。复核提示不阻止本地尝试；任一阻断页仍使整份走云端，不做逐页混合拼接。`local` 模式从不上传，`cloud` 明确使用云端；Office 走云端。自动模式下，本地数值、文本或表格质量检查不通过可回退云端，原候选与报告保留。缺依赖、读取失败或后处理审核错误不会触发上传。
+`process INPUT.pdf --engine auto --output-dir DELIVERY`：有可用原生文字、表格可明确处理且没有阻断页时，优先尝试 PyMuPDF4LLM。复核提示不阻止本地尝试；任一阻断页仍使整份走云端，不做逐页混合拼接。`local` 模式从不上传，`cloud` 明确使用云端；Office 走云端。自动模式下，本地数值、文本或表格质量检查不通过可回退云端，原候选与报告留在任务工作目录，随成功验收后的默认清理一并回收。缺依赖、读取失败或后处理审核错误不会触发上传。
 
 预检报告 `schema_version: 1.2`、`policy: native_simple_tables_first`。每页 `reasons` 为阻断原因，`warnings` 为复核提示，文档汇总 `cloud_pages` 和 `warning_pages`；两者可能同时包含同一页。规则阈值用于分流，不代表统计准确率：
 
@@ -44,7 +44,7 @@
 
 数值核对保留正负号和小数点，并检查技术比较符号。上下标出现连续中文或超过 12 字符的文本时进入待复核状态，不自动抹去格式。此类质量不合格候选在自动模式可转云端，强制本地模式停止。
 
-无 `--output-dir` 时，本地原始包放在 `--work-dir/native/<run-id>`，云端仍返回 `.mineru` 包。需要审核时复用同一原始包，不重新提取后套用旧哈希。
+省略 `--output-dir` 时，CLI 保留原始包供复核。本地原始包位于工作目录的 `native/<run-id>`，云端 `.mineru` 包位于 `cloud/<job-id>`。未指定 `--work-dir` 时使用用户缓存。需要审核时用返回的 `result_dir` 复用同一原始包，不重新提取后套用旧哈希。
 
 ## 1. 复用提取结果
 
@@ -143,22 +143,22 @@ mineru-ocr readable RESULT --source-pdf INPUT.pdf --review-file review.json --ou
 
 ## 4. 交付与内部追溯
 
-交付目录仅含主 Markdown 及其引用的 `images/`。图片和原页使用相对链接，主文档不引用内部 manifest、快照或校勘报告，不要求阅读器安装专用解析器。复杂 HTML 表格和数学公式的渲染能力仍需查看实际阅读器。
+同一个交付目录平铺多份 Markdown，共用 `images/`。图片和原页使用相对于 Markdown 的链接。内部 manifest、快照、校勘报告和云端 `.mineru` 包放在工作目录。复杂 HTML 表格和数学公式的渲染能力仍需查看实际阅读器。
 
-`--work-dir` 必须与交付目录互不嵌套；默认采用用户缓存，长期项目建议显式选用持久路径。每份交付在工作目录中有独立记录，含：
+工作目录与交付目录必须互不嵌套。CLI 默认在用户缓存下创建任务临时目录，校验通过后回收。续跑、复核或用户要求保留时继续使用任务记录。显式传入 `--work-dir` 会保留该目录，方便在复核后按需清理本任务的数据。每份交付在工作目录中有独立记录，含：
 - 与最终正文一致的内部 MD 和资源副本。
 - manifest：来源、正文、资源、证据、报告哈希及已知位置。
 - 原始输入 ZIP：readable 保留 PDF、原始 OCR MD/manifest/资源/布局；publish 保留其实际获得的 MD/资源/来源记录。
 - readable 的内部审计 JSON 和三份中文报告：来源、定位与图片、校勘与缺口。
 - 已执行的图片筛除决定。原始输入不覆盖。
 
-命令返回的 `manifest`、`work_dir`、`processing_reports` 指向内部记录；`delivery_documents` 仅列出主 Markdown，图片在 `images/` 中。报告是本项目内部辅助信息，不是通用 Markdown 标准。
+保留记录时，命令返回的 `manifest`、`work_dir`、`processing_reports` 指向内部记录。`delivery_documents` 列出主 Markdown，图片在 `images/` 中。超时后用 job ID 续跑，返回的 `result_dir` 可用于发布或复核。
 
 ```powershell
 mineru-ocr validate FINAL.md --work-dir RECORDS
 ```
 
-在已记录位置可检查资源、正文、证据、内部报告哈希以及生成锚点；复制 Markdown+images 到新目录后，无内部记录也能做引用检查，此时 `validation_scope` 为 `references`。它不证明历史哈希一致。需要进一步后处理时使用原始 OCR 包，或在原交付位置提供原工作目录；尚无迁移后的记录自动重绑定命令。
+在已记录位置可检查资源、正文、证据、内部报告哈希以及生成锚点。临时记录回收后，或把 Markdown 和图片一起移动到新目录后，运行 `validate FINAL.md` 可做引用检查，此时 `validation_scope` 为 `references`。需要进一步后处理时使用保留的原始 OCR 包，或在原交付位置提供原工作目录。
 
 ## 5. 验收与下游边界
 

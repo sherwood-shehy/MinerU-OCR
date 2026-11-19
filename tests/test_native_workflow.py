@@ -179,6 +179,19 @@ def test_cli_preflight_and_doctor_return_json(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)['local_ready']
 
 
+def test_cli_local_delivery_cleans_work_after_validation(tmp_path, capsys):
+    pytest.importorskip('pymupdf4llm')
+    source = make_pdf(tmp_path / 'native.pdf', image=True)
+    output = tmp_path / 'delivery'
+    assert cli.main(['process', str(source), '--engine', 'local', '--output-dir', str(output)]) == 0
+    result = json.loads(capsys.readouterr().out)[0]
+    markdown = Path(result['markdown'])
+    assert {'manifest', 'work_dir', 'result_dir', 'processing_reports'}.isdisjoint(result)
+    assert not list((tmp_path / 'records').iterdir())
+    assert '](images/' in markdown.read_text(encoding='utf-8')
+    assert validate_output(markdown)['validation_scope'] == 'references'
+
+
 def test_table_spans_cannot_be_flattened_without_rejection(tmp_path):
     source = make_pdf(tmp_path / 'merged.pdf')
     with fitz.open(source) as doc:

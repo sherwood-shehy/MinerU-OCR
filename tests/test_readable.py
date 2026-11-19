@@ -109,6 +109,20 @@ def test_rejects_wrong_pdf_before_publication(tmp_path):
     assert not (tmp_path / 'out').exists()
 
 
+def test_cli_readable_cleans_its_records_and_preserves_the_input_bundle(tmp_path, capsys):
+    from mineru_ocr import cli
+    from mineru_ocr.publish import validate_output
+
+    pdf, bundle = make_source(tmp_path)
+    output = tmp_path / 'delivery'
+    assert cli.main(['readable', str(bundle), '--source-pdf', str(pdf), '--output-dir', str(output)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert {'manifest', 'work_dir', 'processing_reports'}.isdisjoint(result)
+    assert (bundle / 'manifest.json').is_file()
+    assert not list((tmp_path / 'records').iterdir())
+    assert validate_output(result['markdown'])['validation_scope'] == 'references'
+
+
 def test_reviewed_cell_and_formula_corrections_keep_original_page_mapping(tmp_path):
     pdf, bundle = make_source(tmp_path)
     review = tmp_path / 'review.json'

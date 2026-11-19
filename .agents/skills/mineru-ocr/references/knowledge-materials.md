@@ -3,7 +3,7 @@
 ## Portable delivery
 
 - Main Markdown contains extraction or a conservative source/reading edition. Default source delivery creates no full-page PDF screenshots or repetitive verification links; full-page galleries require explicit reading editions.
-- Referenced resources live under `images/` and use relative Markdown/HTML links. Images use their byte SHA-256 plus extension; native SVG is retained.
+- Markdown files are placed directly in the caller's delivery directory and share its `images/` subdirectory. Each Markdown or HTML image link is relative to the document. Images use their byte SHA-256 plus extension. Native SVG is retained.
 - Each valid repeated occurrence and original caption remains. Exact byte duplicates share a stored file; visually similar drawings are not automatically merged.
 - Copy Markdown and its images together. No manifest, custom reader plugin or internal report is required for reading and basic downstream ingestion.
 - HTML tables and source math remain when simpler representation would lose structure. Rendering depends on the consumer's support.
@@ -11,13 +11,13 @@
 
 ## Internal records
 
-`--work-dir` holds source/output hashes, asset identities and positions, original-input snapshots, layout evidence, image decisions and postprocessing reports. It must be separate from delivery with neither directory nested in the other. Default is platform user cache under `mineru-ocr/deliveries`; prefer a persistent explicit location when traceability matters.
+The task directory holds source/output hashes, asset identities and positions, original-input snapshots, layout evidence, image decisions, postprocessing reports, and cloud `.mineru` bundles. It is separate from delivery with neither directory nested in the other. By default the CLI creates it under `mineru-ocr/deliveries` in the platform user cache and removes it after publication checks pass.
 
-The command returns `manifest`, `work_dir` and `processing_reports` paths. These are implementation-specific auxiliary records. Consumers may opt into them but must not need them just to read or ingest source text/images.
+Use an explicit `--work-dir` for review or requested retention. A timed-out cloud job keeps its job ID and task directory so `resume` can produce a raw bundle there. When private records are retained, publication returns their paths. After review, clean up only the task's own temporary data.
 
 The original PDF is included in the `readable` snapshot. Plain `publish` snapshots its available Markdown, resources and provenance; it cannot archive an original document that was not supplied.
 
-Validation at a recorded path checks hashes and records. Relocation without records yields `validation_scope: references`, covering resource existence and generated anchors, not historical hash integrity. There is no automatic record-rebinding command for moved deliveries. Reprocess the original bundle when necessary.
+Validation at a recorded path checks hashes and records. After cleanup or relocation, `validation_scope: references` covers resource existence and generated anchors. Reuse a retained raw bundle for renewed postprocessing.
 
 ## Identity and source positions
 

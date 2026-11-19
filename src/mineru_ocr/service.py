@@ -4,6 +4,8 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from httpx import HTTPError
+
 from .client import MinerUClient
 from .config import get_token
 from .errors import MinerUAPIError, MinerUOCRError
@@ -28,8 +30,8 @@ def _chunks(items: list, size: int = 50):
         yield items[index:index + size]
 
 
-def submit_job(files: list[str], options: OCROptions | None = None) -> list[dict]:
-    jobs = [plan_job(file, options) for file in files]
+def submit_job(files: list[str], options: OCROptions | None = None, *, result_root: Path | None = None) -> list[dict]:
+    jobs = [plan_job(file, options, result_root=result_root) for file in files]
     with MinerUClient(_token()) as client:
         for job in jobs:
             try:
@@ -56,6 +58,7 @@ def submit_job(files: list[str], options: OCROptions | None = None) -> list[dict
                         part.error_code = getattr(exc, "code", None)
                         part.error_message = str(exc)
                 save_job(job)
+                exc.job_id = job.job_id
                 raise
     return [public_job(job) for job in jobs]
 
@@ -103,7 +106,10 @@ def download_ready(job: OCRJob, client: MinerUClient) -> None:
         part_dir = Path(job.work_dir) / "results" / f"part-{part.index:04d}"
         zip_path = part_dir / "result.zip"
         extract_dir = part_dir / "extracted"
-        client.download(part.full_zip_url, zip_path)
+        try:
+            client.download(part.full_zip_url, zip_path)
+        except HTTPError as exc:
+            raise MinerUAPIError(f'Could not download the cloud result for part {part.index}') from exc
         safe_extract(zip_path, extract_dir)
         full_md = find_full_md(extract_dir)
         part.extracted_dir = str(extract_dir)
@@ -132,7 +138,11 @@ def status_job(job_id: str, *, refresh: bool = True) -> dict:
 def wait_job(job_id: str, timeout_seconds: int = 1800, interval_seconds: float = 3.0) -> dict:
     deadline = time.monotonic() + timeout_seconds
     while True:
-        result = status_job(job_id)
+        try:
+            result = status_job(job_id)
+        except (MinerUOCRError, OSError, ValueError) as exc:
+            exc.job_id = job_id
+            raise
         if result["state"] in TERMINAL:
             return result
         if time.monotonic() >= deadline:
@@ -141,8 +151,9 @@ def wait_job(job_id: str, timeout_seconds: int = 1800, interval_seconds: float =
         time.sleep(interval_seconds)
 
 
-def process_files(files: list[str], options: OCROptions | None = None, timeout_seconds: int = 1800) -> list[dict]:
-    submitted = submit_job(files, options)
+def process_files(files: list[str], options: OCROptions | None = None, timeout_seconds: int = 1800,
+                  *, result_root: Path | None = None) -> list[dict]:
+    submitted = submit_job(files, options, result_root=result_root)
     return [wait_job(job["job_id"], timeout_seconds=timeout_seconds) for job in submitted]
 
 

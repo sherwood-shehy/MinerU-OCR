@@ -1,4 +1,4 @@
-# Offline postprocessing — 1.0
+# Offline postprocessing — 1.1
 
 ## Inputs and defaults
 
@@ -90,8 +90,8 @@ Use `mineru_ocr.tables.table_hash`. Pages are physical PDF pages. Maintained rev
 
 ## Acceptance
 
-Delivery contains main MD plus referenced `images/`. Manifests, input ZIPs, audit JSON and three Chinese reports stay in the separate work directory. Raw inputs are never overwritten. Source editions contain only body resources and do not duplicate source PDF pages as screenshots. They do not require custom metadata readers. Keep physical-page mappings in processing records and native page comments.
+Delivery places the Markdown files together with one shared `images/` directory. Image references are relative to each Markdown. Manifests, input ZIPs, audit JSON, reports, and cloud `.mineru` bundles stay in the task directory. Routine publication removes its temporary directory after validation. An explicit `--work-dir` retains records for review. Source editions contain body resources, and native page comments retain physical-page markers.
 
-Run `validate FINAL.md --work-dir RECORDS`. Check a simple table, merged/continued table, formula, figure with units and appendix boundary against originals. Record unresolved OCR, omitted labels and meaningful font distinctions. Formatting checks and successful image decoding do not establish OCR accuracy or human acceptance.
+Run `validate FINAL.md --work-dir RECORDS` when records are retained, or `validate FINAL.md` for reference checks after cleanup. Check a simple table, merged/continued table, formula, figure with units and appendix boundary against originals. Record unresolved OCR, omitted labels and meaningful font distinctions. Formatting checks and successful image decoding do not establish OCR accuracy or human acceptance.
 
 For relocated packages without records, validation covers references only. Preserve internal records for reproducibility and use raw bundles for renewed postprocessing.
